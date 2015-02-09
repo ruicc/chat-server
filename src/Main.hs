@@ -26,7 +26,7 @@ main = withSocketsDo $ do
         port = 3000 :: Int
 
     logCh <- spawnLogger
-    server <- newServer
+    server <- newServer logCh
 
     socket <- listenOn (PortNumber (fromIntegral port))
     printf "Listening on port %d\n" port
@@ -35,18 +35,11 @@ main = withSocketsDo $ do
         (handle, hostname, portnumber) <- accept socket
         printf "Accepted from %s\n" hostname
 
-        forkFinally (clientProcess logCh handle server) (\ _ -> hClose handle)
+        forkFinally (clientProcess handle server) (\ _ -> hClose handle)
 
 
-echo :: LogChan -> Handle -> Server -> IO ()
-echo logCh h server = forever $ do
-    hSetBuffering h LineBuffering
-    str <- hGetLine h
-    log logCh str
-    hPutStrLn h str
-
-clientProcess :: LogChan -> Handle -> Server -> IO ()
-clientProcess logCh hdl srv = do
+clientProcess :: Handle -> Server -> IO ()
+clientProcess hdl srv = do
     let
         gid :: GroupId
             = 23
@@ -54,7 +47,7 @@ clientProcess logCh hdl srv = do
     hSetBuffering hdl LineBuffering
 
     -- Client initialization
-    cl <- newClient
+    cl <- newClient hdl
 
     -- Group manupilations
     gr <- atomically $ do
@@ -66,39 +59,37 @@ clientProcess logCh hdl srv = do
     -- NOTICE: Modify a shared value(gr/srv), need to notify it to Client.
     -- "mask" prevents to catch async-exceptions between "addClient" to "notifyClient".
     mask $ \restore -> do
-        addClient logCh cl gr
-        restore (notifyClient logCh hdl cl gr) `finally` removeClient logCh cl gr
+        addClient srv cl gr
+        restore (notifyClient srv cl gr) `finally` removeClient srv cl gr
 
 
-notifyClient :: LogChan -> Handle -> Client -> Group -> IO ()
-notifyClient logCh hdl cl@Client{..} gr@Group{..} = do
+notifyClient :: Server -> Client -> Group -> IO ()
+notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
     -- Notice group to User
-    hPutStrLn hdl $ concat
+    hPutStrLn clientHandle $ concat
         [ "\n"
         , "Hello, this is easy-chat.\n"
         , "Your ClientId is <" <> show clientId <> ">,\n"
         , "Your GroupId is <" <> show groupId <> ">.\n"
-        , "Type \"/quit\" when you quit."
+        , "Type \"/quit\" when you quit.\n"
         ]
 
     readOnlyTChan <- atomically $ dupTChan groupBroadcastChan
 
     let
-        log' = log logCh
-
         broadcastReceiver :: IO ()
         broadcastReceiver = forever $ do
             atomically $ do
                 msg :: Message
                     <- readTChan readOnlyTChan
                 sendMessage cl msg
---            log' $ "BroadcastReceiver works"
+--            logger $ "BroadcastReceiver works"
 
         receiver :: IO ()
         receiver = forever $ do
-            str' <- hGetLine hdl
+            str' <- hGetLine clientHandle
             let str = rstrip str' -- Chop newline
-            log' $ "Client<" <> (show clientId) <> "> entered raw strings \"" <> str <> "\""
+            logger $ "Client<" <> (show clientId) <> "> entered raw strings \"" <> str <> "\""
             atomically $ sendMessage cl (Command str)
 
         server :: IO ()
@@ -106,7 +97,7 @@ notifyClient logCh hdl cl@Client{..} gr@Group{..} = do
 
             msg :: Message
                 <- atomically $ readTChan clientChan
-            continue <- handleMessage logCh hdl msg cl gr
+            continue <- handleMessage srv gr cl msg
             when continue server
 
     -- Spawn 3 linked threads.
@@ -116,20 +107,27 @@ notifyClient logCh hdl cl@Client{..} gr@Group{..} = do
     return ()
 
 -- Interpret messages
-handleMessage :: LogChan -> Handle -> Message -> Client -> Group -> IO Bool
-handleMessage logCh hdl msg Client{..} gr@Group{..} = do
+handleMessage :: Server -> Group -> Client -> Message -> IO Bool
+handleMessage srv  gr@Group{..} Client{..} msg = do
     case msg of
         Command str -> do
---            hPutStrLn hdl $ "Command: " <> str
+--            hPutStrLn clientHandle $ "Command: " <> str
             case words str of
                 ["/quit"] -> do
-                    hPutStrLn hdl $ "Good bye!"
+                    hPutStrLn clientHandle $ "Good bye!"
                     return False
+                [] -> do
+                    -- Ignore empty messages.
+                    return True
                 _ -> do
                     atomically $ sendBroadcast gr (Broadcast clientId str)
                     return True
         Broadcast cid str -> do
-            hPutStrLn hdl $ "Client<" <> show cid <> "> : " <> str
+            hPutStrLn clientHandle $ "Client<" <> show cid <> "> : " <> str
+            return True
+
+        Notice str -> do
+            hPutStrLn clientHandle $ str
             return True
 
         _ -> throwIO $ ErrorCall "Not impl yet"
@@ -144,6 +142,7 @@ type GroupName = String
 data Client = Client
     { clientId :: ClientId
 --    , clientName :: ClientName
+    , clientHandle :: Handle
     , clientChan :: TChan Message -- ^ Mailbox sent to this client
     }
 data Group = Group
@@ -155,6 +154,7 @@ data Group = Group
     }
 data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
+    , logger :: String -> IO ()
     }
 data Message
     = Notice String
@@ -163,13 +163,13 @@ data Message
     | Command String
     deriving Show
 
-newClient :: IO Client -- TODO: STM??? -> No. Client is not shared value.
-newClient = do
+newClient :: Handle -> IO Client -- TODO: STM??? -> No. Client is not shared value.
+newClient hdl = do
     cid :: Int
         <- Uniq.hashUnique <$> Uniq.newUnique
     ch :: TChan Message
         <- newTChanIO
-    return $ Client cid ch
+    return $ Client cid hdl ch
 
 newGroup :: GroupId -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
 newGroup gid = do
@@ -178,10 +178,13 @@ newGroup gid = do
     bch <- newBroadcastTChan
     return $ Group gid tv cnt bch
 
-newServer :: IO Server
-newServer = do
+newServer :: LogChan -> IO Server
+newServer logCh = do
+    let
+        logger str = writeChan logCh str
     gs <- newTVarIO Map.empty
-    return $ Server gs
+
+    return $ Server gs logger
 
 ------------------------------------------------------------------------------------------
 
@@ -223,9 +226,6 @@ spawnLogger = do
     _tid <- forkIO $ supervisor ch
     return ch
 
-log :: LogChan -> String -> IO ()
-log logCh str = writeChan logCh str
-
 ------------------------------------------------------------------------------------------
 
 getClient :: ClientId -> Group -> STM (Maybe Client)
@@ -234,15 +234,15 @@ getClient cid Group{..} = do
     return $ Map.lookup cid clientMap
 
 
-addClient :: LogChan -> Client -> Group -> IO ()
-addClient logCh cl@Client{..} gr@Group{..} = do
+addClient :: Server -> Client -> Group -> IO ()
+addClient Server{..} cl@Client{..} gr@Group{..} = do
     join $ atomically $ do
         clientMap <- readTVar groupClients
         if Map.member clientId clientMap
             then do
                 cnt <- readTVar groupClientCount
                 return $ do
-                    log logCh $ concat
+                    logger $ concat
                         [ "Client<" <> (show $ clientId) <> "> is already joined to Group<" <> (show $ groupId) <> ">."
                         , " Room members are <" <> show cnt <> ">."
                         ]
@@ -251,15 +251,17 @@ addClient logCh cl@Client{..} gr@Group{..} = do
                 modifyTVar' groupClientCount succ
                 cnt <- readTVar groupClientCount
 
+                sendBroadcast gr (Notice $ "Client<" <> show clientId <> "> is joined.")
+
                 return $ do
-                    log logCh $ concat
+                    logger $ concat
                         [ "Client<" <> (show $ clientId) <> "> is added to Group<" <> (show $ groupId) <> ">."
                         , " Room members are <" <> show cnt <> ">."
                         ]
 
 
-removeClient :: LogChan -> Client -> Group -> IO ()
-removeClient logCh cl@Client{..} gr@Group{..} = do
+removeClient :: Server -> Client -> Group -> IO ()
+removeClient Server{..} cl@Client{..} gr@Group{..} = do
     join $ atomically $ do
         mcl :: Maybe Client
             <- getClient clientId gr
@@ -269,15 +271,17 @@ removeClient logCh cl@Client{..} gr@Group{..} = do
                 modifyTVar' groupClientCount pred
                 cnt <- readTVar groupClientCount
 
+                sendBroadcast gr (Notice $ "Client<" <> show clientId <> "> is left.")
+
                 return $ do
-                    log logCh $ concat
+                    logger $ concat
                         [ "Client<" <> (show $ clientId) <> "> is removed from Group<" <> (show $ groupId) <> ">."
                         , " Room members are <" <> show cnt <> ">."
                         ]
             Nothing -> do
                 cnt <- readTVar groupClientCount
                 return $ do
-                    log logCh $ concat
+                    logger $ concat
                         [ "Client<" <> (show $ clientId) <> "> doesn't exist in Group<" <> (show $ groupId) <> ">."
                         , " Room members are <" <> show cnt <> ">."
                         ]
