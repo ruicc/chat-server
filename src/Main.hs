@@ -14,8 +14,8 @@ import Control.Exception
 import qualified Data.Map as Map
 import qualified Data.Unique as Uniq
 import           Data.Monoid
+import           Data.List (intersperse)
 import           Data.Char (isSpace)
-import           Data.ByteString.UTF8 (fromString)
 import           Text.Printf (printf)
 
 import           System.IO as IO
@@ -32,36 +32,96 @@ main = withSocketsDo $ do
     printf "Listening on port %d\n" port
 
     forever $ do
-        (handle, hostname, portnumber) <- accept socket
+        (hdl, hostname, portnumber) <- accept socket
         printf "Accepted from %s\n" hostname
 
-        forkFinally (clientProcess handle server) (\ _ -> hClose handle)
+        hSetBuffering hdl LineBuffering
+        cl <- newClient hdl
+
+        forkFinally (clientProcess server cl) (\ _ -> hClose hdl)
 
 
-clientProcess :: Handle -> Server -> IO ()
-clientProcess hdl srv = do
-    let
-        gid :: GroupId
-            = 23
+clientProcess :: Server -> Client -> IO ()
+clientProcess srv cl@Client{..} = do
 
-    hSetBuffering hdl LineBuffering
-
+    hSetBuffering clientHandle LineBuffering
+--    hSetBuffering hdl NoBuffering
     -- Client initialization
-    cl <- newClient hdl
 
-    -- Group manupilations
-    gr <- atomically $ do
-        mg <- getGroup srv gid
-        case mg of
-            Just gr -> return gr
-            Nothing -> createGroup srv gid
+    let
+        loop = do
 
-    -- NOTICE: Modify a shared value(gr/srv), need to notify it to Client.
-    -- "mask" prevents to catch async-exceptions between "addClient" to "notifyClient".
-    mask $ \restore -> do
-        addClient srv cl gr
-        restore (notifyClient srv cl gr) `finally` removeClient srv cl gr
+            -- Group manupilations
+            mgr <- groupOperations srv clientHandle
 
+            case mgr of
+                Just gr -> do
+                    -- NOTICE: Modify a shared value(gr/srv), need to notify it to Client.
+                    -- "mask" prevents to catch async-exceptions between "addClient" to "notifyClient".
+                    e :: Either SomeException ()
+                        <- try $ mask $ \restore -> do
+                            addClient srv cl gr
+                            restore (notifyClient srv cl gr) --`finally` removeClient srv cl gr
+
+                    case e of
+                        Left e -> do
+                            removeClient srv cl gr
+                            loop
+                        Right _ -> do
+                            error "ここにもこない"
+                Nothing -> do
+                    hPutStrLn clientHandle $ "Good bye!"
+    loop
+
+
+
+groupOperations :: Server -> Handle -> IO (Maybe Group)
+groupOperations srv@Server{..} hdl = do
+    grs :: [(GroupId, Group)]
+        <- atomically $ getAllGroups srv
+    if null grs
+        then do
+            hPutStrLn hdl $ "There are no chat rooms now.\nCreating new one ..."
+            gid :: GroupId
+                <- Uniq.hashUnique <$> Uniq.newUnique
+            _gr <- atomically $ createGroup srv gid
+            groupOperations srv hdl
+            
+        else do
+            hPutStrLn hdl $ "Current rooms: " <> (concat $ intersperse "," $ map (show . fst) grs)
+            hPutStr hdl $ "Select one, \"/new\" or \"/quit\"> "
+            hFlush hdl
+
+            input :: String
+                <- rstrip <$> hGetLine hdl
+--            hFlush hdl
+
+            logger $ show input
+
+            case input of
+                "/new" -> do
+                    gid :: GroupId
+                        <- Uniq.hashUnique <$> Uniq.newUnique
+                    _gr <- atomically $ createGroup srv gid
+                    groupOperations srv hdl
+
+                "/quit" -> do
+                    return Nothing
+
+                _ -> do
+                
+                    eInt :: Either SomeException Int
+                        <- try $ readIO input
+                    case eInt of
+                        Left e -> do
+                            logger $ show e
+                            groupOperations srv hdl
+                        Right gid -> do
+                            mgr <- atomically $ getGroup srv gid
+                            case mgr of
+                                Nothing -> groupOperations srv hdl
+                                Just gr -> return $ Just gr
+    
 
 notifyClient :: Server -> Client -> Group -> IO ()
 notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
@@ -89,7 +149,7 @@ notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
         receiver = forever $ do
             str' <- hGetLine clientHandle
             let str = rstrip str' -- Chop newline
-            logger $ "Client<" <> (show clientId) <> "> entered raw strings \"" <> str <> "\""
+            logger $ "Client<" <> (show clientId) <> "> entered raw strings: " <> show str
             atomically $ sendMessage cl (Command str)
 
         server :: IO ()
@@ -99,6 +159,8 @@ notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
                 <- atomically $ readTChan clientChan
             continue <- handleMessage srv gr cl msg
             when continue server
+            -- Return..
+            throwIO $ ErrorCall "Left room."
 
     -- Spawn 3 linked threads.
     race_ broadcastReceiver (race_ receiver server)
@@ -114,7 +176,7 @@ handleMessage srv  gr@Group{..} Client{..} msg = do
 --            hPutStrLn clientHandle $ "Command: " <> str
             case words str of
                 ["/quit"] -> do
-                    hPutStrLn clientHandle $ "Good bye!"
+                    hPutStrLn clientHandle $ "You left room."
                     return False
                 [] -> do
                     -- Ignore empty messages.
@@ -288,10 +350,14 @@ removeClient Server{..} cl@Client{..} gr@Group{..} = do
 
 
 getGroup :: Server -> GroupId -> STM (Maybe Group)
-getGroup Server{..} gid =do
+getGroup Server{..} gid = do
     groupMap <- readTVar serverGroups
     return $ Map.lookup gid groupMap
 
+getAllGroups :: Server -> STM [(GroupId, Group)]
+getAllGroups Server{..} = do
+    groupMap <- readTVar serverGroups
+    return $ Map.toList groupMap
 
 createGroup :: Server -> GroupId -> STM Group
 createGroup Server{..} gid = do
