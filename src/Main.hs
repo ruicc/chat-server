@@ -3,7 +3,6 @@ module Main where
 
 import Prelude hiding (log, lookup)
 import Network
-import qualified Network.Socket as Socket
 
 import Control.Applicative
 import Control.Monad
@@ -14,11 +13,12 @@ import Control.Exception
 
 import qualified Data.Map as Map
 import qualified Data.Unique as Uniq
-import           Data.Monoid ((<>))
+import           Data.Monoid
+import           Data.Char (isSpace)
+import           Data.ByteString.UTF8 (fromString)
+import           Text.Printf (printf)
+
 import           System.IO as IO
---import Data.ByteString.Char8 (putStrLn)
-import Data.ByteString.UTF8 (fromString)
-import Text.Printf (printf)
 
 main :: IO ()
 main = withSocketsDo $ do
@@ -34,7 +34,9 @@ main = withSocketsDo $ do
     forever $ do
         (handle, hostname, portnumber) <- accept socket
         printf "Accepted from %s\n" hostname
+
         forkFinally (clientProcess logCh handle server) (\ _ -> hClose handle)
+
 
 echo :: LogChan -> Handle -> Server -> IO ()
 echo logCh h server = forever $ do
@@ -71,35 +73,65 @@ clientProcess logCh hdl srv = do
 notifyClient :: LogChan -> Handle -> Client -> Group -> IO ()
 notifyClient logCh hdl cl@Client{..} gr@Group{..} = do
     -- Notice group to User
-    hPutStrLn hdl $ "Your ClientId is <" <> show clientId <> ">,"
-    hPutStrLn hdl $ "Your GroupId is <" <> show groupId <> ">."
+    hPutStrLn hdl $ concat
+        [ "\n"
+        , "Hello, this is easy-chat.\n"
+        , "Your ClientId is <" <> show clientId <> ">,\n"
+        , "Your GroupId is <" <> show groupId <> ">.\n"
+        , "Type \"/quit\" when you quit."
+        ]
+
+    readOnlyTChan <- atomically $ dupTChan groupBroadcastChan
 
     let
+        log' = log logCh
+
+        broadcastReceiver :: IO ()
+        broadcastReceiver = forever $ do
+            atomically $ do
+                msg :: Message
+                    <- readTChan readOnlyTChan
+                sendMessage cl msg
+--            log' $ "BroadcastReceiver works"
+
         receiver :: IO ()
         receiver = forever $ do
             str' <- hGetLine hdl
-            let str = init str' -- Chop newline
+            let str = rstrip str' -- Chop newline
+            log' $ "Client<" <> (show clientId) <> "> entered raw strings \"" <> str <> "\""
             atomically $ sendMessage cl (Command str)
-            log logCh $ "Client<" <> (show clientId) <> "> sent Message \"" <> str <> "\""
 
-        sender :: IO ()
-        sender = forever $ do
+        server :: IO ()
+        server = do
+
             msg :: Message
                 <- atomically $ readTChan clientChan
-            handleMessage logCh hdl msg
+            continue <- handleMessage logCh hdl msg cl gr
+            when continue server
 
-    -- Spawn 2 linked threads.
-    race_ receiver sender
+    -- Spawn 3 linked threads.
+    race_ broadcastReceiver (race_ receiver server)
 
     -- Thread which accepts a request terminated here.
     return ()
 
-
-handleMessage :: LogChan -> Handle -> Message -> IO ()
-handleMessage logCh hdl msg = do
+-- Interpret messages
+handleMessage :: LogChan -> Handle -> Message -> Client -> Group -> IO Bool
+handleMessage logCh hdl msg Client{..} gr@Group{..} = do
     case msg of
         Command str -> do
-            hPutStrLn hdl $ "Command: " <> str
+--            hPutStrLn hdl $ "Command: " <> str
+            case words str of
+                ["/quit"] -> do
+                    hPutStrLn hdl $ "Good bye!"
+                    return False
+                _ -> do
+                    atomically $ sendBroadcast gr (Broadcast clientId str)
+                    return True
+        Broadcast cid str -> do
+            hPutStrLn hdl $ "Client<" <> show cid <> "> : " <> str
+            return True
+
         _ -> throwIO $ ErrorCall "Not impl yet"
 
 ------------------------------------------------------------------------------------------
@@ -112,13 +144,14 @@ type GroupName = String
 data Client = Client
     { clientId :: ClientId
 --    , clientName :: ClientName
-    , clientChan :: TChan Message
+    , clientChan :: TChan Message -- ^ Mailbox sent to this client
     }
 data Group = Group
     { groupId :: GroupId
 --    , groupName :: GroupName
     , groupClients :: TVar (Map.Map ClientId Client)
     , groupClientCount :: TVar Int
+    , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
     }
 data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
@@ -128,27 +161,38 @@ data Message
     | Tell ClientId String
     | Broadcast ClientId String
     | Command String
+    deriving Show
 
 newClient :: IO Client -- TODO: STM??? -> No. Client is not shared value.
 newClient = do
-    id <- Uniq.hashUnique <$> Uniq.newUnique
-    ch <- newTChanIO
-    return $ Client id ch
+    cid :: Int
+        <- Uniq.hashUnique <$> Uniq.newUnique
+    ch :: TChan Message
+        <- newTChanIO
+    return $ Client cid ch
 
 newGroup :: GroupId -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
 newGroup gid = do
     tv <- newTVar Map.empty
     cnt <- newTVar 0
-    return $ Group gid tv cnt
+    bch <- newBroadcastTChan
+    return $ Group gid tv cnt bch
 
 newServer :: IO Server
 newServer = do
     gs <- newTVarIO Map.empty
     return $ Server gs
 
+------------------------------------------------------------------------------------------
+
 sendMessage :: Client -> Message -> STM ()
 sendMessage Client{..} msg = do
     writeTChan clientChan msg
+
+sendBroadcast :: Group -> Message -> STM ()
+sendBroadcast gr@Group{..} msg = do
+    writeTChan groupBroadcastChan msg
+
 
 ------------------------------------------------------------------------------------------
 
@@ -224,6 +268,7 @@ removeClient logCh cl@Client{..} gr@Group{..} = do
                 modifyTVar' groupClients (Map.delete clientId)
                 modifyTVar' groupClientCount pred
                 cnt <- readTVar groupClientCount
+
                 return $ do
                     log logCh $ concat
                         [ "Client<" <> (show $ clientId) <> "> is removed from Group<" <> (show $ groupId) <> ">."
@@ -255,3 +300,8 @@ deleteGroup Server{..} Group{..} = atomically $ do
     modifyTVar' serverGroups $ Map.delete groupId
 
 
+
+------------------------------------------------------------------------------------------
+
+rstrip :: String -> String
+rstrip = reverse . dropWhile isSpace . reverse
