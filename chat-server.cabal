@@ -28,12 +28,42 @@ executable chat-server
   main-is:
     Main.hs
   -- other-modules:
-  -- other-extensions:
+  default-extensions:
+      ScopedTypeVariables
+    , OverloadedStrings
+    , RecordWildCards
   build-depends:
-    base >=4.7 && <4.8
+      base >=4.7 && <4.8
+    , async
+    , stm
+
+    , containers
+    , bytestring
+    , utf8-string
+
+    , network
   hs-source-dirs:
     src
+  ghc-options:
+    -Wall -ddump-simpl
   default-language:
     Haskell2010
 
+executable aeson
+  main-is:
+    Aeson.hs
+  -- other-modules:
+  default-extensions:
+      ScopedTypeVariables
+    , OverloadedStrings
+    , RecordWildCards
+  build-depends:
+      base >=4.7 && <4.8
+    , text
+    , aeson >= 0.8
+  hs-source-dirs:
+    src
+  ghc-options:
+  default-language:
+    Haskell2010
 -- vim: expandtab tabstop=2 softtabstop=2

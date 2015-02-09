@@ -1,0 +1,5 @@
+:set -XOverloadedStrings
+import Control.Monad as Monad
+import Control.Concurrent as Con
+import Control.Concurrent.STM as STM
+import Control.Exception as E
