@@ -26,15 +26,15 @@ cabal-version:
 
 executable chat-server
   main-is:
-    Main.hs
+    Chat.hs
   other-modules:
-      Log, Types, Client, Utils
+      Chat, Log, Types, Client, Utils
   default-extensions:
       ScopedTypeVariables
     , OverloadedStrings
     , RecordWildCards
   build-depends:
-      base >=4.7 && <4.8
+      base >= 4.7 && <4.8
     , async
     , stm
 
@@ -42,7 +42,7 @@ executable chat-server
     , bytestring
     , utf8-string
 
-    , network
+    , network >= 2.6
   hs-source-dirs:
     src
   ghc-options:
@@ -79,11 +79,22 @@ test-suite tasty
     , OverloadedStrings
     , RecordWildCards
   hs-source-dirs:
-      tests
+      tests, src
   build-depends:
-      base             >=4.6  && <4.8
+      base             >=4.7  && <4.8
     , tasty            >=0.10 && <0.11
     , tasty-quickcheck >=0.8  && <0.9
+
+    , network >= 2.6
+    , async
+    , stm
+
+    , containers
+    , bytestring
+    , utf8-string
+
+  ghc-options:
+      -threaded
   default-language:
       Haskell2010
 -- vim: expandtab tabstop=2 softtabstop=2
