@@ -50,7 +50,7 @@ clientProcess srv cl@Client{..} = do
         loop = do
 
             -- Group manupilations
-            mgr <- groupOperations srv clientHandle
+            mgr <- groupOperations srv cl
 
             case mgr of
                 Just gr -> do
@@ -73,35 +73,45 @@ clientProcess srv cl@Client{..} = do
 
 
 
-groupOperations :: Server -> Handle -> IO (Maybe Group)
-groupOperations srv@Server{..} hdl = do
+groupOperations :: Server -> Client -> IO (Maybe Group)
+groupOperations srv@Server{..} cl@Client{..} = do
+    let
+        getLine = do
+            str <- hGetLine clientHandle
+            hFlush clientHandle
+            return str
+        putStr str = do
+            hPutStr clientHandle str
+            hFlush clientHandle
+
     grs :: [(GroupId, Group)]
         <- atomically $ getAllGroups srv
+
     if null grs
         then do
-            hPutStrLn hdl $ "There are no chat rooms now.\nCreating new one ..."
+            putStr $ "There are no chat rooms now.\nCreating new one ...\n"
             gid :: GroupId
                 <- Uniq.hashUnique <$> Uniq.newUnique
             _gr <- atomically $ createGroup srv gid
-            groupOperations srv hdl
+            groupOperations srv cl
             
         else do
-            hPutStrLn hdl $ "Current rooms: " <> (concat $ intersperse "," $ map (show . fst) grs)
-            hPutStr hdl $ "Select one, \"/new\" or \"/quit\"> "
-            hFlush hdl
+            putStr $ concat
+                [ "Current rooms: " <> (concat $ intersperse "," $ map (show . fst) grs) <> "\n"
+                ,"Select one, \"/new\" or \"/quit\"> "
+                ]
 
             input :: String
-                <- rstrip <$> hGetLine hdl
-            hFlush hdl
+                <- rstrip <$> getLine
 
-            logger $ show input
+            logger $ "Group ops: " <> show input
 
             case input of
                 "/new" -> do
                     gid :: GroupId
                         <- Uniq.hashUnique <$> Uniq.newUnique
                     _gr <- atomically $ createGroup srv gid
-                    groupOperations srv hdl
+                    groupOperations srv cl
 
                 "/quit" -> do
                     return Nothing
@@ -113,13 +123,13 @@ groupOperations srv@Server{..} hdl = do
                     case eInt of
                         Left e -> do
                             logger $ show e
-                            groupOperations srv hdl
+                            groupOperations srv cl
                         Right gid -> do
                             mgr <- atomically $ getGroup srv gid
                             case mgr of
-                                Nothing -> groupOperations srv hdl
+                                Nothing -> groupOperations srv cl
                                 Just gr -> return $ Just gr
-    
+
 
 notifyClient :: Server -> Client -> Group -> IO ()
 notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
@@ -213,6 +223,7 @@ data Group = Group
 --    , groupName :: GroupName
     , groupClients :: TVar (Map.Map ClientId Client)
     , groupClientCount :: TVar Int
+--    , groupHistory :: TVar [Message]
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
     }
 data Server = Server
