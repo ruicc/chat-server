@@ -41,7 +41,7 @@ main = withSocketsDo $ do
 
 
 clientProcess :: Server -> Client -> IO ()
-clientProcess srv cl@Client{..} = do
+clientProcess srv@Server{..} cl@Client{..} = do
 
     hSetBuffering clientHandle LineBuffering
 --    hSetBuffering clientHandle NoBuffering
@@ -59,14 +59,10 @@ clientProcess srv cl@Client{..} = do
                     e :: Either SomeException ()
                         <- try $ mask $ \restore -> do
                             addClient srv cl gr
-                            restore (notifyClient srv cl gr) --`finally` removeClient srv cl gr
+                            restore (notifyClient srv cl gr) `finally` removeClient srv cl gr
 
-                    case e of
-                        Left e -> do
-                            removeClient srv cl gr
-                            loop
-                        Right _ -> do
-                            error "ここにもこない"
+                    loop
+
                 Nothing -> do
                     hPutStrLn clientHandle $ "Good bye!"
     loop
