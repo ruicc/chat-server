@@ -1,6 +1,5 @@
 module Utils where
 
-import           Data.List (intersperse)
 import           Data.Char (isSpace)
 
 

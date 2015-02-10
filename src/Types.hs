@@ -156,7 +156,7 @@ getHistory Group{..} = readTVar groupHistory
 output :: Client -> Message -> IO ()
 output Client{..} msg = do
     let
-        out' (Command str) = return ()
+        out' (Command _) = return ()
         out' (Broadcast cid str) = hPutStrLn clientHandle $ "Client<" <> show cid <> "> : " <> str
         out' (Notice str) = hPutStrLn clientHandle $ str
         out' _ = error "Not impl yet"
@@ -204,11 +204,11 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
 
 
 removeClient :: Server -> Client -> Group -> STM (IO ())
-removeClient Server{..} cl@Client{..} gr@Group{..} = do
+removeClient Server{..} Client{..} gr@Group{..} = do
     mcl :: Maybe Client
         <- getClient clientId gr
     case mcl of
-        Just cl -> do
+        Just _ -> do
             modifyTVar' groupClients (Map.delete clientId)
             modifyTVar' groupClientCount pred
             cnt <- readTVar groupClientCount

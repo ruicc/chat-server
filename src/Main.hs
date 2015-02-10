@@ -27,7 +27,7 @@ main = withSocketsDo $ do
     printf "Listening on port %d\n" port
 
     forever $ do
-        (hdl, hostname, portnumber) <- accept socket
+        (hdl, hostname, _portnumber) <- accept socket
         printf "Accepted from %s\n" hostname
 
         hSetBuffering hdl LineBuffering

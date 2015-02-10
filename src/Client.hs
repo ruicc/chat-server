@@ -12,8 +12,6 @@ import qualified Data.Unique as Uniq
 import           Data.List (intersperse)
 import           Data.Monoid
 
-import           System.IO as IO
-
 import           Types
 import           Utils (rstrip)
 
@@ -29,7 +27,7 @@ clientProcess srv@Server{..} cl@Client{..} = do
                 Just gr -> do
                     -- NOTICE: Modify a shared value(gr/srv), need to notify it to Client.
                     -- "mask" prevents to catch async-exceptions between "addClient" to "notifyClient".
-                    e :: Either SomeException ()
+                    _e :: Either SomeException ()
                         <- try $ mask $ \restore -> do
                             showHistory <- atomically $ addClient srv cl gr
                             restore (notifyClient srv gr cl showHistory) `finally`
@@ -106,10 +104,10 @@ notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 
     onJoin
 
-    runClient srv cl gr
+    runClient srv gr cl
 
-runClient :: Server -> Client -> Group -> IO ()
-runClient srv@Server{..} cl@Client{..} gr@Group{..} = do
+runClient :: Server -> Group -> Client -> IO ()
+runClient Server{..} gr@Group{..} cl@Client{..} = do
     let
         broadcastReceiver :: TChan Message -> IO ()
         broadcastReceiver broadcastCh = forever $ do
@@ -132,7 +130,7 @@ runClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 
             msg :: Message
                 <- atomically $ readTChan clientChan
-            continue <- handleMessage srv gr cl msg
+            continue <- handleMessage gr cl msg
             when continue server
 
             -- Return..
@@ -147,8 +145,9 @@ runClient srv@Server{..} cl@Client{..} gr@Group{..} = do
     return ()
 
 
-handleMessage :: Server -> Group -> Client -> Message -> IO Bool
-handleMessage srv  gr@Group{..} cl@Client{..} msg = do
+handleMessage :: Group -> Client -> Message -> IO Bool
+handleMessage gr@Group{..} cl@Client{..} msg = do
+    -- Send message to client
     output cl msg
 
     case msg of
@@ -163,10 +162,10 @@ handleMessage srv  gr@Group{..} cl@Client{..} msg = do
                 _ -> do
                     atomically $ sendBroadcast gr (Broadcast clientId str)
                     return True
-        Broadcast cid str -> do
+        Broadcast _ _ -> do
             return True
 
-        Notice str -> do
+        Notice _ -> do
             return True
 
         _ -> error "Not impl yet"
