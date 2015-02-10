@@ -35,6 +35,9 @@ main = withSocketsDo $ do
         (hdl, hostname, portnumber) <- accept socket
         printf "Accepted from %s\n" hostname
 
+        hSetBuffering hdl LineBuffering
+--        hSetBuffering hdl NoBuffering
+
         cl <- newClient hdl
 
         forkFinally (clientProcess server cl) (\ _ -> hClose hdl)
@@ -42,10 +45,6 @@ main = withSocketsDo $ do
 
 clientProcess :: Server -> Client -> IO ()
 clientProcess srv@Server{..} cl@Client{..} = do
-
-    hSetBuffering clientHandle LineBuffering
---    hSetBuffering clientHandle NoBuffering
-
     let
         loop = do
 
@@ -58,8 +57,8 @@ clientProcess srv@Server{..} cl@Client{..} = do
                     -- "mask" prevents to catch async-exceptions between "addClient" to "notifyClient".
                     e :: Either SomeException ()
                         <- try $ mask $ \restore -> do
-                            addClient srv cl gr
-                            restore (notifyClient srv cl gr) `finally` removeClient srv cl gr
+                            showHistory <- addClient srv cl gr
+                            restore (notifyClient srv cl gr showHistory) `finally` removeClient srv cl gr
 
                     loop
 
@@ -127,9 +126,23 @@ groupOperations srv@Server{..} cl@Client{..} = do
                                 Just gr -> return $ Just gr
 
 
-notifyClient :: Server -> Client -> Group -> IO ()
-notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
+notifyClient :: Server -> Client -> Group -> IO () -> IO ()
+notifyClient srv@Server{..} cl@Client{..} gr@Group{..} showHistory = do
 
+    -- Notice group to User
+    hPutStrLn clientHandle $ concat
+        [ "\n"
+        , "Hello, this is easy-chat.\n"
+        , "Your ClientId is <" <> show clientId <> ">,\n"
+        , "Your GroupId is <" <> show groupId <> ">.\n"
+        , "Type \"/quit\" when you quit.\n"
+        ]
+    showHistory
+
+    runClient srv cl gr
+
+runClient :: Server -> Client -> Group -> IO ()
+runClient srv@Server{..} cl@Client{..} gr@Group{..} = do
     let
         broadcastReceiver :: TChan Message -> IO ()
         broadcastReceiver broadcastCh = forever $ do
@@ -158,15 +171,6 @@ notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
             -- Return..
             throwIO $ ErrorCall "Left room."
 
-    -- Notice group to User
-    hPutStrLn clientHandle $ concat
-        [ "\n"
-        , "Hello, this is easy-chat.\n"
-        , "Your ClientId is <" <> show clientId <> ">,\n"
-        , "Your GroupId is <" <> show groupId <> ">.\n"
-        , "Type \"/quit\" when you quit.\n"
-        ]
-
     broadcastCh <- atomically $ dupTChan groupBroadcastChan
 
     -- Spawn 3 linked threads.
@@ -175,12 +179,13 @@ notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
     -- Thread which accepts a request terminated here.
     return ()
 
--- Interpret messages
+
 handleMessage :: Server -> Group -> Client -> Message -> IO Bool
-handleMessage srv  gr@Group{..} Client{..} msg = do
+handleMessage srv  gr@Group{..} cl@Client{..} msg = do
+    output cl msg
+
     case msg of
         Command str -> do
---            hPutStrLn clientHandle $ "Command: " <> str
             case words str of
                 ["/quit"] -> do
                     hPutStrLn clientHandle $ "You left room."
@@ -192,14 +197,21 @@ handleMessage srv  gr@Group{..} Client{..} msg = do
                     atomically $ sendBroadcast gr (Broadcast clientId str)
                     return True
         Broadcast cid str -> do
-            hPutStrLn clientHandle $ "Client<" <> show cid <> "> : " <> str
             return True
 
         Notice str -> do
-            hPutStrLn clientHandle $ str
             return True
 
-        _ -> throwIO $ ErrorCall "Not impl yet"
+        _ -> error "Not impl yet"
+
+output :: Client -> Message -> IO ()
+output Client{..} msg = do
+    let
+        out' (Command str) = return ()
+        out' (Broadcast cid str) = hPutStrLn clientHandle $ "Client<" <> show cid <> "> : " <> str
+        out' (Notice str) = hPutStrLn clientHandle $ str
+        out' _ = error "Not impl yet"
+    out' msg
 
 ------------------------------------------------------------------------------------------
 
@@ -219,8 +231,8 @@ data Group = Group
 --    , groupName :: GroupName
     , groupClients :: TVar (Map.Map ClientId Client)
     , groupClientCount :: TVar Int
---    , groupHistory :: TVar [Message]
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
+    , groupHistory :: TVar [Message]
     }
 data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
@@ -233,7 +245,9 @@ data Message
     | Command String
     deriving Show
 
-newClient :: Handle -> IO Client -- TODO: STM??? -> No. Client is not shared value.
+newClient :: Handle -> IO Client -- STM???
+                                 --    -> No. Client is not shared value.
+                                 --    -> Client is shared with server and client but STM isn't required.
 newClient hdl = do
     cid :: Int
         <- Uniq.hashUnique <$> Uniq.newUnique
@@ -243,10 +257,11 @@ newClient hdl = do
 
 newGroup :: GroupId -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
 newGroup gid = do
-    tv <- newTVar Map.empty
+    clientMap <- newTVar Map.empty
     cnt <- newTVar 0
+    history <- newTVar []
     bch <- newBroadcastTChan
-    return $ Group gid tv cnt bch
+    return $ Group gid clientMap cnt bch history
 
 newServer :: LogChan -> IO Server
 newServer logCh = do
@@ -264,8 +279,19 @@ sendMessage Client{..} msg = do
 
 sendBroadcast :: Group -> Message -> STM ()
 sendBroadcast gr@Group{..} msg = do
+    addHistory gr msg
     writeTChan groupBroadcastChan msg
 
+addHistory :: Group -> Message -> STM ()
+addHistory Group{..} msg = do
+    hist <- readTVar groupHistory
+    if length hist >= 20
+        -- Keep only latest 20 messages
+        then writeTVar groupHistory $ msg : take 19 hist
+        else writeTVar groupHistory $ msg : hist
+
+getHistory :: Group -> STM [Message]
+getHistory Group{..} = readTVar groupHistory
 
 ------------------------------------------------------------------------------------------
 
@@ -304,9 +330,10 @@ getClient cid Group{..} = do
     return $ Map.lookup cid clientMap
 
 
-addClient :: Server -> Client -> Group -> IO ()
+-- | Add client to group. Returned action is to show latest history.
+addClient :: Server -> Client -> Group -> IO (IO ())
 addClient Server{..} cl@Client{..} gr@Group{..} = do
-    join $ atomically $ do
+    atomically $ do
         clientMap <- readTVar groupClients
         if Map.member clientId clientMap
             then do
@@ -319,11 +346,16 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
             else do
                 writeTVar groupClients $ Map.insert clientId cl clientMap
                 modifyTVar' groupClientCount succ
-                cnt <- readTVar groupClientCount
+                cnt :: Int
+                    <- readTVar groupClientCount
+                hist :: [Message]
+                    <- getHistory gr
 
                 sendBroadcast gr (Notice $ "Client<" <> show clientId <> "> is joined.")
 
                 return $ do
+                    -- Show history
+                    forM_ (reverse hist) $ \msg -> output cl msg
                     logger $ concat
                         [ "Client<" <> (show $ clientId) <> "> is added to Group<" <> (show $ groupId) <> ">."
                         , " Room members are <" <> show cnt <> ">."
