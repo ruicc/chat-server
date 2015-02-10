@@ -26,17 +26,33 @@ main = do
         portId = PortNumber $ fromIntegral port
 
 
-    forkIO $ runChatServer port
+--    forkIO $ runChatServer port
+--    threadDelay $ 500 * 1000
 
-    threadDelay $ 500 * 1000
 
-    hdl <- connectTo "localhost" portId
-    hSetBuffering hdl LineBuffering
+--    hGetLine hdl
+--    hGetLine hdl
+    forM_ [1..20] $ \j -> do
+        forkIO $ do
+            hdl <- connectTo "localhost" portId
+            hSetBuffering hdl LineBuffering
+            threadDelay $ 100 * 1000
 
-    hGetLine hdl
-    hGetLine hdl
-    hPutStrLn hdl "/new"
 
+            forM_ [1..50] $ \i -> do
+--                hPutStrLn hdl "/new"
+--                threadDelay $ 1000
+                hPutStrLn hdl "2"
+                threadDelay $ 2000
+                hPutStrLn hdl $ "Hello " ++ show j ++ " " ++ show i
+                threadDelay $ 2000
+                hPutStrLn hdl "/quit"
+                threadDelay $ 5000
+            hPutStrLn hdl "/quit"
+
+--            hClose hdl
+
+    threadDelay $ 4 * 1000 * 1000
     -- TODO ...
 
 --    defaultMain tests

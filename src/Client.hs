@@ -12,6 +12,7 @@ import qualified Data.Unique as Uniq
 import           Data.List (intersperse)
 import           Data.Monoid
 
+import qualified Log as Log
 import           Types
 import           Utils (rstrip)
 
@@ -21,7 +22,8 @@ clientProcess srv@Server{..} cl@Client{..} = do
         loop = do
 
             -- Group manupilations
-            mgr <- groupOperations srv cl
+            mgr :: Maybe Group
+                <- groupOperations srv cl
 
             case mgr of
                 Just gr -> do
@@ -30,12 +32,12 @@ clientProcess srv@Server{..} cl@Client{..} = do
                     _e :: Either SomeException ()
                         <- try $ mask $ \restore -> do
                             showHistory <- atomically $ addClient srv cl gr
-                            restore (notifyClient srv gr cl showHistory) `finally`
-                                    (atomically $ removeClient srv cl gr)
+                            restore (notifyClient srv gr cl showHistory) `finally` (join $ atomically $ removeClient srv cl gr)
 
                     loop
 
                 Nothing -> do
+                    tick Log.ClientLeft
                     clientPut cl $ "Good bye!\n"
     loop
 
@@ -70,6 +72,8 @@ groupOperations srv@Server{..} cl@Client{..} = do
                     gid :: GroupId
                         <- Uniq.hashUnique <$> Uniq.newUnique
                     _gr <- atomically $ createGroup srv gid
+                    tick Log.GroupNew
+
                     groupOperations srv cl
 
                 "/quit" -> do
@@ -107,7 +111,7 @@ notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
     runClient srv gr cl
 
 runClient :: Server -> Group -> Client -> IO ()
-runClient Server{..} gr@Group{..} cl@Client{..} = do
+runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
     let
         broadcastReceiver :: TChan Message -> IO ()
         broadcastReceiver broadcastCh = forever $ do
@@ -130,7 +134,7 @@ runClient Server{..} gr@Group{..} cl@Client{..} = do
 
             msg :: Message
                 <- atomically $ readTChan clientChan
-            continue <- handleMessage gr cl msg
+            continue <- handleMessage srv gr cl msg
             when continue server
 
             -- Return..
@@ -138,15 +142,20 @@ runClient Server{..} gr@Group{..} cl@Client{..} = do
 
     broadcastCh <- atomically $ dupTChan groupBroadcastChan
 
+
+--    _e :: Either SomeException ()
+--        <- try $ race_ (broadcastReceiver broadcastCh) (race_ receiver server)
+--    clientProcess srv cl
+
+
     -- Spawn 3 linked threads.
     race_ (broadcastReceiver broadcastCh) (race_ receiver server)
-
     -- Thread which accepts a request terminated here.
     return ()
 
 
-handleMessage :: Group -> Client -> Message -> IO Bool
-handleMessage gr@Group{..} cl@Client{..} msg = do
+handleMessage :: Server -> Group -> Client -> Message -> IO Bool
+handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do
     -- Send message to client
     output cl msg
 
@@ -160,6 +169,7 @@ handleMessage gr@Group{..} cl@Client{..} msg = do
                     -- Ignore empty messages.
                     return True
                 _ -> do
+                    tick Log.GroupChat
                     atomically $ sendBroadcast gr (Broadcast clientId str)
                     return True
         Broadcast _ _ -> do

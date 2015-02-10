@@ -19,8 +19,9 @@ import           Client (clientProcess)
 runChatServer :: Int -> IO ()
 runChatServer port = withSocketsDo $ do
 
+    statCh <- Log.spawnAggregator
     logCh <- Log.spawnLogger
-    server <- newServer logCh
+    server <- newServer logCh statCh
 
     socket <- listenOn (PortNumber (fromIntegral port))
     printf "Listening on port %d\n" port
@@ -33,5 +34,6 @@ runChatServer port = withSocketsDo $ do
 --        hSetBuffering hdl NoBuffering
 
         cl <- newClient hdl
+        tick server $ Log.ClientNew
 
         forkFinally (clientProcess server cl) (\ _ -> hClose hdl)

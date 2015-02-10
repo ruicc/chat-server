@@ -4,7 +4,6 @@ import Prelude hiding (log, lookup)
 
 import Control.Applicative
 import Control.Monad
-import Control.Concurrent
 import Control.Concurrent.STM
 
 import qualified Data.Map as Map
@@ -41,6 +40,7 @@ data Group = Group
 data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
     , logger :: String -> IO ()
+    , tick :: Log.AppEvent -> IO ()
     }
 data Message
     = Notice String
@@ -57,13 +57,15 @@ data Message
 ------------------------------------------------------------------------------------------
 -- | Server
 
-newServer :: Log.LogChan -> IO Server
-newServer logCh = do
+newServer :: Log.LogChan -> Log.StatChan -> IO Server
+newServer logCh statCh = do
     let
-        logger str = writeChan logCh str
+--        logger str = return ()
+        logger str = atomically $ writeTChan logCh str
+        tick ev = atomically $ writeTChan statCh ev
     gs <- newTVarIO Map.empty
 
-    return $ Server gs logger
+    return $ Server gs logger tick
 
 
 ------------------------------------------------------------------------------------------
@@ -124,7 +126,7 @@ clientGet Client{..} = do
 clientPut :: Client -> String -> IO ()
 clientPut Client{..} str = do
     hPutStr clientHandle str
-    hFlush clientHandle
+--    hFlush clientHandle
 
 
 ------------------------------------------------------------------------------------------
@@ -197,6 +199,7 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
             return $ do
                 -- Show history
                 forM_ (reverse hist) $ \msg -> output cl msg
+                tick Log.GroupJoin
                 logger $ concat
                     [ "Client<" <> (show $ clientId) <> "> is added to Group<" <> (show $ groupId) <> ">."
                     , " Room members are <" <> show cnt <> ">."
@@ -216,6 +219,7 @@ removeClient Server{..} Client{..} gr@Group{..} = do
             sendBroadcast gr (Notice $ "Client<" <> show clientId <> "> is left.")
 
             return $ do
+                tick Log.GroupLeft
                 logger $ concat
                     [ "Client<" <> (show $ clientId) <> "> is removed from Group<" <> (show $ groupId) <> ">."
                     , " Room members are <" <> show cnt <> ">."
