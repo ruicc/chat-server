@@ -32,47 +32,38 @@ clientProcess srv@Server{..} cl@Client{..} = do
                     e :: Either SomeException ()
                         <- try $ mask $ \restore -> do
                             showHistory <- atomically $ addClient srv cl gr
-                            restore (notifyClient srv cl gr showHistory) `finally`
+                            restore (notifyClient srv gr cl showHistory) `finally`
                                     (atomically $ removeClient srv cl gr)
 
                     loop
 
                 Nothing -> do
-                    hPutStrLn clientHandle $ "Good bye!"
+                    clientPut cl $ "Good bye!\n"
     loop
 
 
 
 groupOperations :: Server -> Client -> IO (Maybe Group)
 groupOperations srv@Server{..} cl@Client{..} = do
-    let
-        getLine = do
-            str <- hGetLine clientHandle
-            hFlush clientHandle
-            return str
-        putStr str = do
-            hPutStr clientHandle str
-            hFlush clientHandle
-
     grs :: [(GroupId, Group)]
         <- atomically $ getAllGroups srv
 
     if null grs
         then do
-            putStr $ "There are no chat rooms now.\nCreating new one ...\n"
+            clientPut cl $ "There are no chat rooms now.\nCreating new one ...\n"
             gid :: GroupId
                 <- Uniq.hashUnique <$> Uniq.newUnique
             _gr <- atomically $ createGroup srv gid
             groupOperations srv cl
             
         else do
-            putStr $ concat
+            clientPut cl $ concat
                 [ "Current rooms: " <> (concat $ intersperse "," $ map (show . fst) grs) <> "\n"
                 ,"Select one, \"/new\" or \"/quit\"> "
                 ]
 
             input :: String
-                <- rstrip <$> getLine
+                <- rstrip <$> clientGet cl
 
             logger $ "Group ops: " <> show input
 
@@ -101,16 +92,16 @@ groupOperations srv@Server{..} cl@Client{..} = do
                                 Just gr -> return $ Just gr
 
 
-notifyClient :: Server -> Client -> Group -> IO () -> IO ()
-notifyClient srv@Server{..} cl@Client{..} gr@Group{..} onJoin = do
+notifyClient :: Server -> Group -> Client -> IO () -> IO ()
+notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 
     -- Notice group to User
-    hPutStrLn clientHandle $ concat
+    clientPut cl $ concat
         [ "\n"
         , "Hello, this is easy-chat.\n"
         , "Your ClientId is <" <> show clientId <> ">,\n"
         , "Your GroupId is <" <> show groupId <> ">.\n"
-        , "Type \"/quit\" when you quit.\n"
+        , "Type \"/quit\" when you quit.\n\n"
         ]
 
     onJoin
@@ -130,8 +121,7 @@ runClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 
         receiver :: IO ()
         receiver = forever $ do
-            str' <- hGetLine clientHandle
-            hFlush clientHandle
+            str' <- clientGet cl
 
             let str = rstrip str' -- Chop newline
             logger $ "Client<" <> (show clientId) <> "> entered raw strings: " <> show str
@@ -165,7 +155,7 @@ handleMessage srv  gr@Group{..} cl@Client{..} msg = do
         Command str -> do
             case words str of
                 ["/quit"] -> do
-                    hPutStrLn clientHandle $ "You left room."
+                    clientPut cl $ "You left room.\n"
                     return False
                 [] -> do
                     -- Ignore empty messages.

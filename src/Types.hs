@@ -16,6 +16,7 @@ import           System.IO as IO
 import qualified Log as Log
 
 ------------------------------------------------------------------------------------------
+-- | Types
 
 type ClientId = Int
 type ClientName = String
@@ -52,23 +53,9 @@ data Message
 --    , endTime :: UTCTime
 --    }
 
-newClient :: Handle -> IO Client -- STM???
-                                 --    -> No. Client is not shared value.
-                                 --    -> Client is shared with server and client but STM isn't required.
-newClient hdl = do
-    cid :: Int
-        <- Uniq.hashUnique <$> Uniq.newUnique
-    ch :: TChan Message
-        <- newTChanIO
-    return $ Client cid hdl ch
 
-newGroup :: GroupId -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
-newGroup gid = do
-    clientMap <- newTVar Map.empty
-    cnt <- newTVar 0
-    history <- newTVar []
-    bch <- newBroadcastTChan
-    return $ Group gid clientMap cnt bch history
+------------------------------------------------------------------------------------------
+-- | Server
 
 newServer :: Log.LogChan -> IO Server
 newServer logCh = do
@@ -78,7 +65,70 @@ newServer logCh = do
 
     return $ Server gs logger
 
+
 ------------------------------------------------------------------------------------------
+-- | Group
+
+newGroup :: GroupId -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
+newGroup gid = do
+    clientMap <- newTVar Map.empty
+    cnt <- newTVar 0
+    history <- newTVar []
+    bch <- newBroadcastTChan
+    return $ Group gid clientMap cnt bch history
+
+getGroup :: Server -> GroupId -> STM (Maybe Group)
+getGroup Server{..} gid = do
+    groupMap <- readTVar serverGroups
+    return $ Map.lookup gid groupMap
+
+getAllGroups :: Server -> STM [(GroupId, Group)]
+getAllGroups Server{..} = do
+    groupMap <- readTVar serverGroups
+    return $ Map.toList groupMap
+
+createGroup :: Server -> GroupId -> STM Group
+createGroup Server{..} gid = do
+    gr <- newGroup gid
+    modifyTVar' serverGroups $ Map.insert (groupId gr) gr
+    return gr
+
+deleteGroup :: Server -> Group -> STM ()
+deleteGroup Server{..} Group{..} = do
+    modifyTVar' serverGroups $ Map.delete groupId
+
+
+------------------------------------------------------------------------------------------
+-- | Client
+
+newClient :: Handle -> IO Client -- STM???
+                                 --    -> No. Client is not shared value.
+                                 --    -> Client is shared with server and client but STM isn't required.
+newClient hdl = do
+    cid :: Int
+        <- Uniq.hashUnique <$> Uniq.newUnique
+    ch :: TChan Message
+        <- newTChanIO
+    return $ Client
+        { clientId = cid
+        , clientHandle = hdl
+        , clientChan = ch
+        }
+
+clientGet :: Client -> IO String
+clientGet Client{..} = do
+    str <- hGetLine clientHandle
+    hFlush clientHandle
+    return str
+
+clientPut :: Client -> String -> IO ()
+clientPut Client{..} str = do
+    hPutStr clientHandle str
+    hFlush clientHandle
+
+
+------------------------------------------------------------------------------------------
+-- | Message
 
 sendMessage :: Client -> Message -> STM ()
 sendMessage Client{..} msg = do
@@ -112,7 +162,9 @@ output Client{..} msg = do
         out' _ = error "Not impl yet"
     out' msg
 
+
 ------------------------------------------------------------------------------------------
+-- | Group and Client
 
 getClient :: ClientId -> Group -> STM (Maybe Client)
 getClient cid Group{..} = do
@@ -176,23 +228,3 @@ removeClient Server{..} cl@Client{..} gr@Group{..} = do
                     , " Room members are <" <> show cnt <> ">."
                     ]
 
-
-getGroup :: Server -> GroupId -> STM (Maybe Group)
-getGroup Server{..} gid = do
-    groupMap <- readTVar serverGroups
-    return $ Map.lookup gid groupMap
-
-getAllGroups :: Server -> STM [(GroupId, Group)]
-getAllGroups Server{..} = do
-    groupMap <- readTVar serverGroups
-    return $ Map.toList groupMap
-
-createGroup :: Server -> GroupId -> STM Group
-createGroup Server{..} gid = do
-    gr <- newGroup gid
-    modifyTVar' serverGroups $ Map.insert (groupId gr) gr
-    return gr
-
-deleteGroup :: Server -> Group -> STM ()
-deleteGroup Server{..} Group{..} = do
-    modifyTVar' serverGroups $ Map.delete groupId
