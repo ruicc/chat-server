@@ -35,7 +35,6 @@ main = withSocketsDo $ do
         (hdl, hostname, portnumber) <- accept socket
         printf "Accepted from %s\n" hostname
 
-        hSetBuffering hdl LineBuffering
         cl <- newClient hdl
 
         forkFinally (clientProcess server cl) (\ _ -> hClose hdl)
@@ -45,8 +44,7 @@ clientProcess :: Server -> Client -> IO ()
 clientProcess srv cl@Client{..} = do
 
     hSetBuffering clientHandle LineBuffering
---    hSetBuffering hdl NoBuffering
-    -- Client initialization
+--    hSetBuffering clientHandle NoBuffering
 
     let
         loop = do
@@ -94,7 +92,7 @@ groupOperations srv@Server{..} hdl = do
 
             input :: String
                 <- rstrip <$> hGetLine hdl
---            hFlush hdl
+            hFlush hdl
 
             logger $ show input
 
@@ -125,29 +123,21 @@ groupOperations srv@Server{..} hdl = do
 
 notifyClient :: Server -> Client -> Group -> IO ()
 notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
-    -- Notice group to User
-    hPutStrLn clientHandle $ concat
-        [ "\n"
-        , "Hello, this is easy-chat.\n"
-        , "Your ClientId is <" <> show clientId <> ">,\n"
-        , "Your GroupId is <" <> show groupId <> ">.\n"
-        , "Type \"/quit\" when you quit.\n"
-        ]
-
-    readOnlyTChan <- atomically $ dupTChan groupBroadcastChan
 
     let
-        broadcastReceiver :: IO ()
-        broadcastReceiver = forever $ do
+        broadcastReceiver :: TChan Message -> IO ()
+        broadcastReceiver broadcastCh = forever $ do
             atomically $ do
                 msg :: Message
-                    <- readTChan readOnlyTChan
+                    <- readTChan broadcastCh
                 sendMessage cl msg
 --            logger $ "BroadcastReceiver works"
 
         receiver :: IO ()
         receiver = forever $ do
             str' <- hGetLine clientHandle
+            hFlush clientHandle
+
             let str = rstrip str' -- Chop newline
             logger $ "Client<" <> (show clientId) <> "> entered raw strings: " <> show str
             atomically $ sendMessage cl (Command str)
@@ -162,8 +152,19 @@ notifyClient srv@Server{..} cl@Client{..} gr@Group{..} = do
             -- Return..
             throwIO $ ErrorCall "Left room."
 
+    -- Notice group to User
+    hPutStrLn clientHandle $ concat
+        [ "\n"
+        , "Hello, this is easy-chat.\n"
+        , "Your ClientId is <" <> show clientId <> ">,\n"
+        , "Your GroupId is <" <> show groupId <> ">.\n"
+        , "Type \"/quit\" when you quit.\n"
+        ]
+
+    broadcastCh <- atomically $ dupTChan groupBroadcastChan
+
     -- Spawn 3 linked threads.
-    race_ broadcastReceiver (race_ receiver server)
+    race_ (broadcastReceiver broadcastCh) (race_ receiver server)
 
     -- Thread which accepts a request terminated here.
     return ()
