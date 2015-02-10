@@ -27,7 +27,8 @@ cabal-version:
 executable chat-server
   main-is:
     Main.hs
-  -- other-modules:
+  other-modules:
+      Log, Types, Client, Utils
   default-extensions:
       ScopedTypeVariables
     , OverloadedStrings
