@@ -5,6 +5,7 @@ import Prelude hiding (log, lookup)
 import Control.Applicative
 import Control.Monad
 import Control.Concurrent.STM
+import Control.Exception
 
 import qualified Data.Map as Map
 import qualified Data.Unique as Uniq
@@ -41,6 +42,7 @@ data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
     , logger :: String -> IO ()
     , tick :: Log.AppEvent -> IO ()
+    , errorCollector :: SomeException -> IO ()
     }
 data Message
     = Notice String
@@ -57,15 +59,16 @@ data Message
 ------------------------------------------------------------------------------------------
 -- | Server
 
-newServer :: Log.LogChan -> Log.StatChan -> IO Server
-newServer logCh statCh = do
+newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> IO Server
+newServer logCh statCh erCh = do
     let
 --        logger str = return ()
         logger str = atomically $ writeTChan logCh str
         tick ev = atomically $ writeTChan statCh ev
+        errorCollector e = atomically $ writeTChan erCh e
     gs <- newTVarIO Map.empty
 
-    return $ Server gs logger tick
+    return $ Server gs logger tick errorCollector
 
 
 ------------------------------------------------------------------------------------------
@@ -126,7 +129,7 @@ clientGet Client{..} = do
 clientPut :: Client -> String -> IO ()
 clientPut Client{..} str = do
     hPutStr clientHandle str
---    hFlush clientHandle
+    hFlush clientHandle
 
 
 ------------------------------------------------------------------------------------------

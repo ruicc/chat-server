@@ -30,30 +30,27 @@ main = do
 --    threadDelay $ 500 * 1000
 
 
---    hGetLine hdl
---    hGetLine hdl
-    forM_ [1..20] $ \j -> do
+    forM_ [1..10] $ \j -> do
         forkIO $ do
             hdl <- connectTo "localhost" portId
             hSetBuffering hdl LineBuffering
             threadDelay $ 100 * 1000
 
 
-            forM_ [1..50] $ \i -> do
+            forM_ [1..100] $ \i -> do
 --                hPutStrLn hdl "/new"
 --                threadDelay $ 1000
                 hPutStrLn hdl "2"
-                threadDelay $ 2000
+                threadDelay $ 10 * 1000
                 hPutStrLn hdl $ "Hello " ++ show j ++ " " ++ show i
-                threadDelay $ 2000
+                threadDelay $ 10 * 1000
                 hPutStrLn hdl "/quit"
-                threadDelay $ 5000
+                threadDelay $ 10 * 1000
             hPutStrLn hdl "/quit"
 
 --            hClose hdl
 
-    threadDelay $ 4 * 1000 * 1000
-    -- TODO ...
+    threadDelay $ 8 * 1000 * 1000 -- TODO ...
 
 --    defaultMain tests
 

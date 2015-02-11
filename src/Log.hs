@@ -11,8 +11,8 @@ import           Data.Monoid
 
 type LogChan = TChan String
 
-spawnLogger :: IO LogChan
-spawnLogger = do
+spawnLogger :: ErrorChan -> IO LogChan
+spawnLogger erCh = do
     let
         supervisor ch = do
             as :: Async ()
@@ -20,8 +20,8 @@ spawnLogger = do
             res :: Either SomeException ()
                 <- try $ wait as
             case res of
-                Left _e -> do
-                    -- TODO: Error reporting..
+                Left e -> do
+                    atomically $ writeTChan erCh e
                     supervisor ch
                 Right _ -> error "ここには来ない"
 
@@ -35,6 +35,8 @@ spawnLogger = do
 
     _tid <- forkIO $ supervisor ch
     return ch
+
+------------------------------------------------------------------------------------------
 
 type StatChan = TChan AppEvent
 
@@ -56,8 +58,8 @@ data Summary = Summary
     }
     deriving Show
 
-spawnAggregator :: IO StatChan
-spawnAggregator = do
+spawnAggregator :: ErrorChan -> IO StatChan
+spawnAggregator erCh = do
     let
         zeroSummary = newTVarIO (Summary 0 0 0 0 0 0)
 
@@ -69,8 +71,7 @@ spawnAggregator = do
 
             case res of
                 Left e -> do
-                    -- TODO: Error reporting..
-                    putStrLn $ "Agg err: " <> show e
+                    atomically $ writeTChan erCh e
                     supervisor ch tsum
                 Right _ -> error "ここには来ない"
 
@@ -103,4 +104,33 @@ spawnAggregator = do
 
     _tid <- forkIO $ supervisor ch tsum
     _tid2 <- forkIO $ outputRepeatedly tsum
+    return ch
+
+------------------------------------------------------------------------------------------
+
+type ErrorChan = TChan SomeException
+
+spawnErrorCollector :: IO ErrorChan
+spawnErrorCollector = do
+    let
+        supervisor ch = do
+            as :: Async ()
+                <- async (collector ch)
+            res :: Either SomeException ()
+                <- try $ wait as
+            case res of
+                Left e -> do
+                    atomically $ writeTChan ch e
+                    supervisor ch
+                Right _ -> error "ここには来ない"
+
+        collector :: ErrorChan -> IO ()
+        collector ch = forever $ do
+            err <- atomically $ readTChan ch
+            putStrLn $ "Err: " <> show err
+
+    ch :: ErrorChan
+        <- newTChanIO
+
+    _tid <- forkIO $ supervisor ch
     return ch

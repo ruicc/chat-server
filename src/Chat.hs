@@ -6,9 +6,10 @@ import Network
 
 import Control.Monad
 import Control.Concurrent
+import Control.Exception
 
+import           Data.Monoid
 import           Text.Printf (printf)
-
 import           System.IO as IO
 
 import qualified Log as Log
@@ -19,9 +20,10 @@ import           Client (clientProcess)
 runChatServer :: Int -> IO ()
 runChatServer port = withSocketsDo $ do
 
-    statCh <- Log.spawnAggregator
-    logCh <- Log.spawnLogger
-    server <- newServer logCh statCh
+    erCh <- Log.spawnErrorCollector
+    statCh <- Log.spawnAggregator erCh
+    logCh <- Log.spawnLogger erCh
+    server <- newServer logCh statCh erCh
 
     socket <- listenOn (PortNumber (fromIntegral port))
     printf "Listening on port %d\n" port
@@ -36,4 +38,11 @@ runChatServer port = withSocketsDo $ do
         cl <- newClient hdl
         tick server $ Log.ClientNew
 
-        forkFinally (clientProcess server cl) (\ _ -> hClose hdl)
+        let
+            errHdlr :: Either SomeException () -> IO ()
+            errHdlr (Left e) = do
+                putStrLn $ "error: " <> show e
+                errorCollector server e
+            errHdlr _ = return ()
+
+        forkFinally (clientProcess server cl) (\ e -> errHdlr e >> hClose hdl)
