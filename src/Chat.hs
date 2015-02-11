@@ -20,10 +20,9 @@ import           Client (clientProcess)
 runChatServer :: Int -> IO ()
 runChatServer port = withSocketsDo $ do
 
-    erCh <- Log.spawnErrorCollector
-    statCh <- Log.spawnAggregator erCh
-    logCh <- Log.spawnLogger erCh
-    server <- newServer logCh statCh erCh
+    (erCh, stCh, logCh) <- Log.spawnCollectorThreads
+
+    server <- newServer logCh stCh erCh
 
     socket <- listenOn (PortNumber (fromIntegral port))
     printf "Listening on port %d\n" port

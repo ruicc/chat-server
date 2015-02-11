@@ -2,11 +2,13 @@ module App.Prelude
     ( module P
     , module B
     , module B.Short
+    , module Data.Monoid
     , expr
-    , ShortByteString
     , putStr, putStrLn
     , hPutStr, hPutStrLn, hGetLine
     , IO.Handle, IO.hFlush
+    , IO.hSetBuffering
+    , IO.BufferMode(..)
     , words, rstrip
     , readInt
     )
@@ -15,6 +17,7 @@ module App.Prelude
 import           Prelude as P hiding (log, lookup, putStrLn, putStr, words)
 import           Control.Applicative
 
+import           Data.Monoid
 import           Data.Char (isSpace)
 import qualified Data.ByteString as B hiding (putStrLn, putStr)
 import qualified Data.ByteString.Char8 as B.Char

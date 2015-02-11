@@ -12,8 +12,8 @@ import           Data.Monoid
 
 type LogChan = TChan ShortByteString
 
-spawnLogger :: ErrorChan -> IO LogChan
-spawnLogger erCh = do
+spawnLogger :: ErrorChan -> LogChan -> IO ()
+spawnLogger erCh logCh = do
     let
         supervisor ch = do
             as :: Async ()
@@ -31,11 +31,8 @@ spawnLogger erCh = do
             str <- atomically $ readTChan ch
             putStrLn $ "Log: " <> str
 
-    ch :: LogChan
-        <- newTChanIO
-
-    _tid <- forkIO $ supervisor ch
-    return ch
+    _tid <- forkIO $ supervisor logCh
+    return ()
 
 ------------------------------------------------------------------------------------------
 
@@ -48,6 +45,7 @@ data AppEvent
     | GroupChat
     | GroupJoin
     | GroupLeft
+    | SystemError
 
 data Summary = Summary 
     { clientNew :: Int
@@ -56,13 +54,16 @@ data Summary = Summary
     , groupChat :: Int
     , groupJoin :: Int
     , groupLeft :: Int
+    , systemErrors :: Int
     }
     deriving Show
 
-spawnAggregator :: ErrorChan -> IO StatChan
-spawnAggregator erCh = do
+zeroSummary :: IO (TVar Summary)
+zeroSummary = newTVarIO (Summary 0 0 0 0 0 0 0)
+
+spawnStatAggregator :: ErrorChan -> StatChan -> TVar Summary -> IO ()
+spawnStatAggregator erCh stCh tsum = do
     let
-        zeroSummary = newTVarIO (Summary 0 0 0 0 0 0)
 
         supervisor ch tsum = do
             as :: Async ()
@@ -89,32 +90,19 @@ spawnAggregator erCh = do
         aggregate sum GroupChat  = modifyTVar' sum $ \s -> s { groupChat = succ $ groupChat s }
         aggregate sum GroupJoin  = modifyTVar' sum $ \s -> s { groupJoin = succ $ groupJoin s }
         aggregate sum GroupLeft  = modifyTVar' sum $ \s -> s { groupLeft = succ $ groupLeft s }
+        aggregate sum SystemError = modifyTVar' sum $ \s -> s { systemErrors = succ $ systemErrors s }
 
-        outputRepeatedly :: TVar Summary -> IO ()
-        outputRepeatedly tsum = do
-            sum <- atomically $ readTVar tsum
-            print sum
-            threadDelay $ 5 * 1000 * 1000
-            outputRepeatedly tsum
-
-    tsum :: TVar Summary
-        <- zeroSummary
-
-    ch :: StatChan
-        <- newTChanIO
-
-    _tid <- forkIO $ supervisor ch tsum
-    _tid2 <- forkIO $ outputRepeatedly tsum
-    return ch
+    _tid <- forkIO $ supervisor stCh tsum
+    return ()
 
 ------------------------------------------------------------------------------------------
 
 type ErrorChan = TChan SomeException
 
-spawnErrorCollector :: IO ErrorChan
-spawnErrorCollector = do
+spawnErrorCollector :: ErrorChan -> StatChan -> TVar Summary -> IO ()
+spawnErrorCollector erCh stCh tsum = do
     let
-        supervisor ch = do
+        supervisor ch tsum = do
             as :: Async ()
                 <- async (collector ch)
             res :: Either SomeException ()
@@ -122,16 +110,44 @@ spawnErrorCollector = do
             case res of
                 Left e -> do
                     atomically $ writeTChan ch e
-                    supervisor ch
+                    supervisor ch tsum
                 Right _ -> error "ここには来ない"
 
         collector :: ErrorChan -> IO ()
         collector ch = forever $ do
-            err <- atomically $ readTChan ch
+            err <- atomically $ do
+                writeTChan stCh SystemError
+                readTChan ch
             putStrLn $ "Err: " <> expr err
 
-    ch :: ErrorChan
+    _tid <- forkIO $ supervisor erCh tsum
+    return ()
+
+------------------------------------------------------------------------------------------
+
+spawnCollectorThreads :: IO (ErrorChan, StatChan, LogChan)
+spawnCollectorThreads = do
+    let
+        outputRepeatedly :: TVar Summary -> IO ()
+        outputRepeatedly tsum = do
+            sum <- atomically $ readTVar tsum
+            print sum
+            threadDelay $ 5 * 1000 * 1000
+            outputRepeatedly tsum
+
+    sum <- zeroSummary
+
+    erCh :: ErrorChan
+        <- newTChanIO
+    stCh :: StatChan
+        <- newTChanIO
+    logCh :: LogChan
         <- newTChanIO
 
-    _tid <- forkIO $ supervisor ch
-    return ch
+    spawnErrorCollector erCh stCh sum
+    spawnStatAggregator erCh stCh sum
+    spawnLogger erCh logCh
+
+
+    _tid2 <- forkIO $ outputRepeatedly sum
+    return (erCh, stCh, logCh)

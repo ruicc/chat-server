@@ -61,7 +61,8 @@ test-suite tasty
   main-is:
       Tasty.hs
   default-extensions:
-      ScopedTypeVariables
+      NoImplicitPrelude
+    , ScopedTypeVariables
     , OverloadedStrings
     , RecordWildCards
   hs-source-dirs:

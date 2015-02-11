@@ -1,5 +1,6 @@
 module Main where
 
+import App.Prelude
 import Test.Tasty
 --import Test.Tasty.HUnit as HU
 import Test.Tasty.QuickCheck as QC
@@ -8,7 +9,7 @@ import System.Exit (exitFailure, exitSuccess)
 import           Control.Monad
 import           Control.Concurrent
 import           Network
-import           System.IO
+--import           System.IO
 
 import           Chat (runChatServer)
 import           Client (clientProcess)
@@ -42,7 +43,7 @@ main = do
 --                threadDelay $ 1000
                 hPutStrLn hdl "2"
                 threadDelay $ 10 * 1000
-                hPutStrLn hdl $ "Hello " ++ show j ++ " " ++ show i
+                hPutStrLn hdl $ "Hello " <> expr j <> " " <> expr i
                 threadDelay $ 10 * 1000
                 hPutStrLn hdl "/quit"
                 threadDelay $ 10 * 1000
