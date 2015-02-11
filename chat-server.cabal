@@ -44,6 +44,7 @@ executable chat-server
     , utf8-string
 
     , network >= 2.6
+    , ekg
   hs-source-dirs:
     src
   ghc-options:
