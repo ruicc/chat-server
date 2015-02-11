@@ -1,6 +1,6 @@
 module Types where
 
-import Prelude hiding (log, lookup)
+import App.Prelude
 
 import Control.Applicative
 import Control.Monad
@@ -10,8 +10,7 @@ import Control.Exception
 import qualified Data.Map as Map
 import qualified Data.Unique as Uniq
 import           Data.Monoid
-
-import           System.IO as IO
+import qualified Data.ByteString as B
 
 import qualified Log as Log
 
@@ -19,9 +18,9 @@ import qualified Log as Log
 -- | Types
 
 type ClientId = Int
-type ClientName = String
+type ClientName = ShortByteString
 type GroupId = Int
-type GroupName = String
+type GroupName = ShortByteString
 
 data Client = Client
     { clientId :: ClientId
@@ -40,15 +39,15 @@ data Group = Group
     }
 data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
-    , logger :: String -> IO ()
+    , logger :: ShortByteString -> IO ()
     , tick :: Log.AppEvent -> IO ()
     , errorCollector :: SomeException -> IO ()
     }
 data Message
-    = Notice String
-    | Tell ClientId String
-    | Broadcast ClientId String
-    | Command String
+    = Notice ShortByteString
+    | Tell ClientId ShortByteString
+    | Broadcast ClientId ShortByteString
+    | Command ShortByteString
     deriving Show
 --data Game = Game
 --    { startTime :: UTCTime
@@ -120,13 +119,13 @@ newClient hdl = do
         , clientChan = ch
         }
 
-clientGet :: Client -> IO String
+clientGet :: Client -> IO ShortByteString
 clientGet Client{..} = do
     str <- hGetLine clientHandle
     hFlush clientHandle
     return str
 
-clientPut :: Client -> String -> IO ()
+clientPut :: Client -> ShortByteString -> IO ()
 clientPut Client{..} str = do
     hPutStr clientHandle str
     hFlush clientHandle
@@ -162,7 +161,7 @@ output :: Client -> Message -> IO ()
 output Client{..} msg = do
     let
         out' (Command _) = return ()
-        out' (Broadcast cid str) = hPutStrLn clientHandle $ "Client<" <> show cid <> "> : " <> str
+        out' (Broadcast cid str) = hPutStrLn clientHandle $ "Client<" <> expr cid <> "> : " <> str
         out' (Notice str) = hPutStrLn clientHandle $ str
         out' _ = error "Not impl yet"
     out' msg
@@ -185,9 +184,9 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
         then do
             cnt <- readTVar groupClientCount
             return $ do
-                logger $ concat
-                    [ "Client<" <> (show $ clientId) <> "> is already joined to Group<" <> (show $ groupId) <> ">."
-                    , " Room members are <" <> show cnt <> ">."
+                logger $ mconcat
+                    [ "Client<" <> expr clientId <> "> is already joined to Group<" <> expr groupId <> ">."
+                    , " Room members are <" <> expr cnt <> ">."
                     ]
         else do
             writeTVar groupClients $ Map.insert clientId cl clientMap
@@ -197,15 +196,15 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
             hist :: [Message]
                 <- getHistory gr
 
-            sendBroadcast gr (Notice $ "Client<" <> show clientId <> "> is joined.")
+            sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is joined.")
 
             return $ do
                 -- Show history
                 forM_ (reverse hist) $ \msg -> output cl msg
                 tick Log.GroupJoin
-                logger $ concat
-                    [ "Client<" <> (show $ clientId) <> "> is added to Group<" <> (show $ groupId) <> ">."
-                    , " Room members are <" <> show cnt <> ">."
+                logger $ mconcat
+                    [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."
+                    , " Room members are <" <> expr cnt <> ">."
                     ]
 
 
@@ -219,19 +218,19 @@ removeClient Server{..} Client{..} gr@Group{..} = do
             modifyTVar' groupClientCount pred
             cnt <- readTVar groupClientCount
 
-            sendBroadcast gr (Notice $ "Client<" <> show clientId <> "> is left.")
+            sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
 
             return $ do
                 tick Log.GroupLeft
-                logger $ concat
-                    [ "Client<" <> (show $ clientId) <> "> is removed from Group<" <> (show $ groupId) <> ">."
-                    , " Room members are <" <> show cnt <> ">."
+                logger $ mconcat
+                    [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
+                    , " Room members are <" <> expr cnt <> ">."
                     ]
         Nothing -> do
             cnt <- readTVar groupClientCount
             return $ do
-                logger $ concat
-                    [ "Client<" <> (show $ clientId) <> "> doesn't exist in Group<" <> (show $ groupId) <> ">."
-                    , " Room members are <" <> show cnt <> ">."
+                logger $ mconcat
+                    [ "Client<" <> expr clientId <> "> doesn't exist in Group<" <> expr groupId <> ">."
+                    , " Room members are <" <> expr cnt <> ">."
                     ]
 

@@ -1,5 +1,6 @@
 module Log where
 
+import           App.Prelude
 import           Control.Monad
 import           Control.Concurrent
 import           Control.Concurrent.STM
@@ -9,7 +10,7 @@ import           Control.Exception
 import           Data.Monoid
 
 
-type LogChan = TChan String
+type LogChan = TChan ShortByteString
 
 spawnLogger :: ErrorChan -> IO LogChan
 spawnLogger erCh = do
@@ -127,7 +128,7 @@ spawnErrorCollector = do
         collector :: ErrorChan -> IO ()
         collector ch = forever $ do
             err <- atomically $ readTChan ch
-            putStrLn $ "Err: " <> show err
+            putStrLn $ "Err: " <> expr err
 
     ch :: ErrorChan
         <- newTChanIO

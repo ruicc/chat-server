@@ -1,5 +1,7 @@
 module Utils where
 
+import           App.Prelude
+import           Data.Monoid
 import           Data.Char (isSpace)
 
 

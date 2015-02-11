@@ -1,6 +1,6 @@
 module Client (clientProcess) where
 
-import Prelude hiding (log, lookup)
+import App.Prelude
 
 import Control.Applicative
 import Control.Monad
@@ -14,7 +14,6 @@ import           Data.Monoid
 
 import qualified Log as Log
 import           Types
-import           Utils (rstrip)
 
 clientProcess :: Server -> Client -> IO ()
 clientProcess srv@Server{..} cl@Client{..} = do
@@ -31,8 +30,8 @@ clientProcess srv@Server{..} cl@Client{..} = do
                     -- "mask" prevents to catch async-exceptions between "addClient" to "notifyClient".
                     _e :: Either SomeException ()
                         <- try $ mask $ \restore -> do
-                            showHistory <- atomically $ addClient srv cl gr
-                            restore (notifyClient srv gr cl showHistory) `finally` (join $ atomically $ removeClient srv cl gr)
+                            exprHistory <- atomically $ addClient srv cl gr
+                            restore (notifyClient srv gr cl exprHistory) `finally` (join $ atomically $ removeClient srv cl gr)
 
                     loop
 
@@ -57,15 +56,15 @@ groupOperations srv@Server{..} cl@Client{..} = do
             groupOperations srv cl
             
         else do
-            clientPut cl $ concat
-                [ "Current rooms: " <> (concat $ intersperse "," $ map (show . fst) grs) <> "\n"
+            clientPut cl $ mconcat
+                [ "Current rooms: " <> (mconcat $ intersperse "," $ map (expr . fst) grs) <> "\n"
                 ,"Select one, \"/new\" or \"/quit\"> "
                 ]
 
-            input :: String
+            input :: ShortByteString
                 <- rstrip <$> clientGet cl
 
-            logger $ "Group ops: " <> show input
+            logger $ "Group ops: " <> expr input
 
             case input of
                 "/new" -> do
@@ -81,13 +80,10 @@ groupOperations srv@Server{..} cl@Client{..} = do
 
                 _ -> do
                 
-                    eInt :: Either SomeException Int
-                        <- try $ readIO input
-                    case eInt of
-                        Left e -> do
-                            logger $ show e
+                    case readInt input of
+                        Nothing -> do
                             groupOperations srv cl
-                        Right gid -> do
+                        Just (gid, _) -> do
                             mgr <- atomically $ getGroup srv gid
                             case mgr of
                                 Nothing -> groupOperations srv cl
@@ -98,11 +94,11 @@ notifyClient :: Server -> Group -> Client -> IO () -> IO ()
 notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 
     -- Notice group to User
-    clientPut cl $ concat
+    clientPut cl $ mconcat
         [ "\n"
         , "Hello, this is easy-chat.\n"
-        , "Your ClientId is <" <> show clientId <> ">,\n"
-        , "Your GroupId is <" <> show groupId <> ">.\n"
+        , "Your ClientId is <" <> expr clientId <> ">,\n"
+        , "Your GroupId is <" <> expr groupId <> ">.\n"
         , "Type \"/quit\" when you quit.\n\n"
         ]
 
@@ -126,7 +122,7 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
             str' <- clientGet cl
 
             let str = rstrip str' -- Chop newline
-            logger $ "Client<" <> (show clientId) <> "> entered raw strings: " <> show str
+            logger $ "Client<" <> (expr clientId) <> "> entered raw strings: " <> expr str
             atomically $ sendMessage cl (Command str)
 
         server :: IO ()

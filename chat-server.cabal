@@ -28,9 +28,10 @@ executable chat-server
   main-is:
     Main.hs
   other-modules:
-      Chat, Log, Types, Client, Utils
+      Chat, Log, Types, Client, Utils, App.Prelude
   default-extensions:
-      ScopedTypeVariables
+      NoImplicitPrelude
+    , ScopedTypeVariables
     , OverloadedStrings
     , RecordWildCards
   build-depends:

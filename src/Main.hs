@@ -1,5 +1,6 @@
 module Main where
 
+import           App.Prelude
 import           Chat (runChatServer)
 
 port :: Int
