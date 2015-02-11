@@ -38,7 +38,7 @@ main = do
             threadDelay $ 100 * 1000
 
 
-            forM_ [1..100] $ \i -> do
+            forM_ [1..30] $ \i -> do
 --                hPutStrLn hdl "/new"
 --                threadDelay $ 1000
                 hPutStrLn hdl "2"
@@ -51,7 +51,7 @@ main = do
 
 --            hClose hdl
 
-    threadDelay $ 8 * 1000 * 1000 -- TODO ...
+    threadDelay $ 3 * 1000 * 1000 -- TODO ...
 
 --    defaultMain tests
 

@@ -32,7 +32,7 @@ clientProcess srv@Server{..} cl@Client{..} = do
                         <- try $ mask $ \restore -> do
                             exprHistory <- atomically $ addClient srv cl gr
                             restore (notifyClient srv gr cl exprHistory) `finally` (join $ atomically $ removeClient srv cl gr)
-
+--                    logger "Hey, select a room again"
                     loop
 
                 Nothing -> do
@@ -132,22 +132,12 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
                 <- atomically $ readTChan clientChan
             continue <- handleMessage srv gr cl msg
             when continue server
-
-            -- Return..
-            throwIO $ ErrorCall "Left room."
+            -- Left the room if continue == False.
 
     broadcastCh <- atomically $ dupTChan groupBroadcastChan
 
-
---    _e :: Either SomeException ()
---        <- try $ race_ (broadcastReceiver broadcastCh) (race_ receiver server)
---    clientProcess srv cl
-
-
     -- Spawn 3 linked threads.
     race_ (broadcastReceiver broadcastCh) (race_ receiver server)
-    -- Thread which accepts a request terminated here.
-    return ()
 
 
 handleMessage :: Server -> Group -> Client -> Message -> IO Bool
