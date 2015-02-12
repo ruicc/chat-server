@@ -1,8 +1,10 @@
 module Server (runClientThread) where
 
 import           App.Prelude
+import qualified App.Time as Time
 
 import           Data.List (intersperse)
+import           Data.Unique as Uniq
 
 import qualified Log as Log
 import           Types
@@ -15,23 +17,34 @@ runClientThread srv@Server{..} hdl = do
         loop cl = do
 
             -- Group manupilations
-            mgr :: Maybe Group
-                <- groupOperations srv cl
+            smGroup :: STM (Maybe Group)
+                <- gettingGroup srv cl
 
-            case mgr of
-                Just gr -> do
-                    -- NOTICE: Modify a shared value(gr/srv), need to notify it to Client.
-                    -- "mask" prevents to catch async-exceptions between "addClient" to "notifyClient".
-                    _e :: Either SomeException ()
-                        <- try $ mask $ \restore -> do
-                            exprHistory <- atomically $ addClient srv cl gr
-                            restore (notifyClient srv gr cl exprHistory) `finally` (join $ atomically $ removeClient srv cl gr)
---                    logger "Hey, select a room again"
-                    loop cl
+            mask $ \restore -> do
+                -- Execute Get and Join *ATOMICALLY*
+                mGroup <- atomically $ do
+                    -- NOTICE: Getting a group might fail due to room capacity.
+                    mgr <- smGroup
+                    case mgr of
+                        Just gr -> do
+                            onJoin <- addClient srv cl gr
+                            return $ Just (gr, onJoin)
 
-                Nothing -> do
-                    tick Log.ClientLeft
---                    clientPut cl $ "Good bye!\n"
+                        Nothing -> do
+                            -- Getting group failed..
+                            return Nothing
+                _ <- case mGroup of
+                    Just (gr, onJoin) ->
+                            restore (notifyClient srv gr cl onJoin)
+                                    `finally` (join $ atomically $ removeClient srv cl gr)
+
+                    Nothing -> loop cl
+
+                -- User left the group.
+                return ()
+
+            loop cl
+
     cl <- initClient srv hdl
     loop cl
 
@@ -43,8 +56,8 @@ initClient srv hdl = do
     return cl
 
 
-groupOperations :: Server -> Client -> IO (Maybe Group)
-groupOperations srv@Server{..} cl@Client{..} = do
+gettingGroup :: Server -> Client -> IO (STM (Maybe Group))
+gettingGroup srv@Server{..} cl@Client{..} = do
     grs :: [(GroupId, Group)]
         <- atomically $ getAllGroups srv
 
@@ -60,38 +73,29 @@ groupOperations srv@Server{..} cl@Client{..} = do
     input :: ShortByteString
         <- rstrip <$> clientGet cl
 
---    logger $ "Group select: " <> expr input
+    logger $ "Group select: " <> expr input
 
     case words input of
-        ["/quit"] -> return Nothing
+        ["/quit"] -> return $ return Nothing
 
-        ["/new", gid'] -> do
-            case readInt gid' of
+        ["/new", name, timeout'] -> do
+            case readInt timeout' of
+                Just (timeout, _) -> do
+                    gid <- Uniq.hashUnique <$> Uniq.newUnique
+                    ts <- Time.getUnixTimeAsInt
+                    return $ Just <$> createGroup srv gid name ts timeout
+
                 Nothing -> do
-                    groupOperations srv cl
-                Just (gid, _) -> do
-                    mgr <- atomically $ getGroup srv gid
-                    case mgr of
-                        Nothing -> do
-                            _gr <- atomically $ createGroup srv gid
-                            tick Log.GroupNew
-                            groupOperations srv cl
-                        Just _ -> groupOperations srv cl
+                    gettingGroup srv cl
 
         ["/join", gid'] -> do
 
             case readInt gid' of
                 Nothing -> do
-                    groupOperations srv cl
+                    gettingGroup srv cl
                 Just (gid, _) -> do
-                    mgr <- atomically $ getGroup srv gid
-                    case mgr of
-                        Nothing -> do
-                            gr <- atomically $ createGroup srv gid
-                            tick Log.GroupNew
-                            return $ Just gr
-                        Just gr -> return $ Just gr
-        _ -> groupOperations srv cl
+                    return $ getGroup srv gid
+        _ -> gettingGroup srv cl
 
 
 notifyClient :: Server -> Group -> Client -> IO () -> IO ()

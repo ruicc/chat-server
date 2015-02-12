@@ -24,12 +24,15 @@ data Client = Client
     }
 data Group = Group
     { groupId :: GroupId
---    , groupName :: GroupName
+    , groupName :: GroupName
+    , groupCreatedAt :: Int -- ^ UnixTime
+    , groupTimeout :: Int -- ^ Seconds
+
     , groupClients :: TVar (Map.Map ClientId Client)
     , groupClientCount :: TVar Int
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
     , groupHistory :: TVar [Message]
---    , groupGameState :: TVar Game
+    , groupGameState :: TVar Game
     }
 data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
@@ -43,10 +46,12 @@ data Message
     | Broadcast ClientId ShortByteString
     | Command ShortByteString
     deriving Show
---data Game = Game
---    { startTime :: UTCTime
---    , endTime :: UTCTime
---    }
+data Game = Game
+    { gameStatus :: GameStatus
+    , deadClients :: [Client]
+    }
+data GameStatus = Waiting | Playing | Result
+
 
 
 ------------------------------------------------------------------------------------------
@@ -67,13 +72,14 @@ newServer logCh statCh erCh = do
 ------------------------------------------------------------------------------------------
 -- | Group
 
-newGroup :: GroupId -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
-newGroup gid = do
+newGroup :: GroupId -> ShortByteString -> Int -> Int -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
+newGroup gid name ts timeout = do
     clientMap <- newTVar Map.empty
     cnt <- newTVar 0
     history <- newTVar []
     bch <- newBroadcastTChan
-    return $ Group gid clientMap cnt bch history
+    gameSt <- newTVar $ Game Waiting []
+    return $ Group gid name ts timeout clientMap cnt bch history gameSt
 
 getGroup :: Server -> GroupId -> STM (Maybe Group)
 getGroup Server{..} gid = do
@@ -85,9 +91,9 @@ getAllGroups Server{..} = do
     groupMap <- readTVar serverGroups
     return $ Map.toList groupMap
 
-createGroup :: Server -> GroupId -> STM Group
-createGroup Server{..} gid = do
-    gr <- newGroup gid
+createGroup :: Server -> GroupId -> ShortByteString -> Int -> Int -> STM Group
+createGroup Server{..} gid name ts timeout = do
+    gr <- newGroup gid name ts timeout
     modifyTVar' serverGroups $ Map.insert (groupId gr) gr
     return gr
 
