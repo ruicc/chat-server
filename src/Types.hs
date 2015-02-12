@@ -2,15 +2,8 @@ module Types where
 
 import App.Prelude
 
-import Control.Applicative
-import Control.Monad
-import Control.Concurrent.STM
-import Control.Exception
-
 import qualified Data.Map as Map
 import qualified Data.Unique as Uniq
-import           Data.Monoid
-import qualified Data.ByteString as B
 
 import qualified Log as Log
 
@@ -200,7 +193,7 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
 
             return $ do
                 -- Show history
-                forM_ (reverse hist) $ \msg -> output cl msg
+--                forM_ (reverse hist) $ \msg -> output cl msg
                 tick Log.GroupJoin
                 logger $ mconcat
                     [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."

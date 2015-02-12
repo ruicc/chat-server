@@ -1,14 +1,9 @@
 module Chat (runChatServer) where
 
 
-import Prelude hiding (log, lookup)
+import App.Prelude
 import Network
 
-import Control.Monad
-import Control.Concurrent
-import Control.Exception
-
-import           Data.Monoid
 import           Text.Printf (printf)
 import           System.IO as IO
 
@@ -34,14 +29,11 @@ runChatServer port = withSocketsDo $ do
         hSetBuffering hdl LineBuffering
 --        hSetBuffering hdl NoBuffering
 
-        cl <- newClient hdl
-        tick server $ Log.ClientNew
 
         let
             errHdlr :: Either SomeException () -> IO ()
             errHdlr (Left e) = do
-                putStrLn $ "error: " <> show e
                 errorCollector server e
             errHdlr _ = return ()
 
-        forkFinally (clientProcess server cl) (\ e -> errHdlr e >> hClose hdl)
+        forkFinally (clientProcess server hdl) (\ e -> errHdlr e >> hClose hdl)

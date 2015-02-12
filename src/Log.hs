@@ -1,13 +1,6 @@
 module Log where
 
 import           App.Prelude
-import           Control.Monad
-import           Control.Concurrent
-import           Control.Concurrent.STM
-import           Control.Concurrent.Async
-import           Control.Exception
-
-import           Data.Monoid
 
 
 type LogChan = TChan ShortByteString
@@ -47,7 +40,7 @@ data AppEvent
     | GroupLeft
     | SystemError
 
-data Summary = Summary 
+data AppStat = AppStat
     { clientNew :: Int
     , clientLeft :: Int
     , groupNew :: Int
@@ -58,11 +51,11 @@ data Summary = Summary
     }
     deriving Show
 
-zeroSummary :: IO (TVar Summary)
-zeroSummary = newTVarIO (Summary 0 0 0 0 0 0 0)
+zeroStat :: IO (TVar AppStat)
+zeroStat = newTVarIO (AppStat 0 0 0 0 0 0 0)
 
-spawnStatAggregator :: ErrorChan -> StatChan -> TVar Summary -> IO ()
-spawnStatAggregator erCh stCh tsum = do
+spawnStatAggregator :: ErrorChan -> StatChan -> TVar AppStat -> IO ()
+spawnStatAggregator erCh stCh stat = do
     let
 
         supervisor ch tsum = do
@@ -77,30 +70,30 @@ spawnStatAggregator erCh stCh tsum = do
                     supervisor ch tsum
                 Right _ -> error "ここには来ない"
 
-        aggregator :: StatChan -> TVar Summary -> IO ()
+        aggregator :: StatChan -> TVar AppStat -> IO ()
         aggregator ch tsum = do
-            stat
+            st
                 <- atomically $ readTChan ch
-            atomically $ aggregate tsum stat
+            atomically $ aggregate tsum st
             aggregator ch tsum
 
-        aggregate sum ClientNew  = modifyTVar' sum $ \s -> s { clientNew = succ $ clientNew s }
-        aggregate sum ClientLeft = modifyTVar' sum $ \s -> s { clientLeft = succ $ clientLeft s }
-        aggregate sum GroupNew  = modifyTVar' sum $ \s -> s { groupNew = succ $ groupNew s }
-        aggregate sum GroupChat  = modifyTVar' sum $ \s -> s { groupChat = succ $ groupChat s }
-        aggregate sum GroupJoin  = modifyTVar' sum $ \s -> s { groupJoin = succ $ groupJoin s }
-        aggregate sum GroupLeft  = modifyTVar' sum $ \s -> s { groupLeft = succ $ groupLeft s }
-        aggregate sum SystemError = modifyTVar' sum $ \s -> s { systemErrors = succ $ systemErrors s }
+        aggregate tsum ClientNew  = modifyTVar' tsum $ \s -> s { clientNew = succ $ clientNew s }
+        aggregate tsum ClientLeft = modifyTVar' tsum $ \s -> s { clientLeft = succ $ clientLeft s }
+        aggregate tsum GroupNew  = modifyTVar' tsum $ \s -> s { groupNew = succ $ groupNew s }
+        aggregate tsum GroupChat  = modifyTVar' tsum $ \s -> s { groupChat = succ $ groupChat s }
+        aggregate tsum GroupJoin  = modifyTVar' tsum $ \s -> s { groupJoin = succ $ groupJoin s }
+        aggregate tsum GroupLeft  = modifyTVar' tsum $ \s -> s { groupLeft = succ $ groupLeft s }
+        aggregate tsum SystemError = modifyTVar' tsum $ \s -> s { systemErrors = succ $ systemErrors s }
 
-    _tid <- forkIO $ supervisor stCh tsum
+    _tid <- forkIO $ supervisor stCh stat
     return ()
 
 ------------------------------------------------------------------------------------------
 
 type ErrorChan = TChan SomeException
 
-spawnErrorCollector :: ErrorChan -> StatChan -> TVar Summary -> IO ()
-spawnErrorCollector erCh stCh tsum = do
+spawnErrorCollector :: ErrorChan -> StatChan -> TVar AppStat -> IO ()
+spawnErrorCollector erCh stCh stat = do
     let
         supervisor ch tsum = do
             as :: Async ()
@@ -120,7 +113,7 @@ spawnErrorCollector erCh stCh tsum = do
                 readTChan ch
             putStrLn $ "Err: " <> expr err
 
-    _tid <- forkIO $ supervisor erCh tsum
+    _tid <- forkIO $ supervisor erCh stat
     return ()
 
 ------------------------------------------------------------------------------------------
@@ -128,14 +121,14 @@ spawnErrorCollector erCh stCh tsum = do
 spawnCollectorThreads :: IO (ErrorChan, StatChan, LogChan)
 spawnCollectorThreads = do
     let
-        outputRepeatedly :: TVar Summary -> IO ()
+        outputRepeatedly :: TVar AppStat -> IO ()
         outputRepeatedly tsum = do
-            sum <- atomically $ readTVar tsum
-            print sum
+            s <- atomically $ readTVar tsum
+            print s
             threadDelay $ 5 * 1000 * 1000
             outputRepeatedly tsum
 
-    sum <- zeroSummary
+    stat <- zeroStat
 
     erCh :: ErrorChan
         <- newTChanIO
@@ -144,10 +137,10 @@ spawnCollectorThreads = do
     logCh :: LogChan
         <- newTChanIO
 
-    spawnErrorCollector erCh stCh sum
-    spawnStatAggregator erCh stCh sum
+    spawnErrorCollector erCh stCh stat
+    spawnStatAggregator erCh stCh stat
     spawnLogger erCh logCh
 
 
-    _tid2 <- forkIO $ outputRepeatedly sum
+    _tid2 <- forkIO $ outputRepeatedly stat
     return (erCh, stCh, logCh)

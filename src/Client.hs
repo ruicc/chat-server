@@ -1,24 +1,18 @@
 module Client (clientProcess) where
 
-import App.Prelude
+import           App.Prelude
 
-import Control.Applicative
-import Control.Monad
-import Control.Concurrent.STM
-import Control.Concurrent.Async
-import Control.Exception
-
-import qualified Data.Unique as Uniq
 import           Data.List (intersperse)
-import           Data.Monoid
 
 import qualified Log as Log
 import           Types
 
-clientProcess :: Server -> Client -> IO ()
-clientProcess srv@Server{..} cl@Client{..} = do
+
+
+clientProcess :: Server -> Handle -> IO ()
+clientProcess srv@Server{..} hdl = do
     let
-        loop = do
+        loop cl = do
 
             -- Group manupilations
             mgr :: Maybe Group
@@ -33,13 +27,20 @@ clientProcess srv@Server{..} cl@Client{..} = do
                             exprHistory <- atomically $ addClient srv cl gr
                             restore (notifyClient srv gr cl exprHistory) `finally` (join $ atomically $ removeClient srv cl gr)
 --                    logger "Hey, select a room again"
-                    loop
+                    loop cl
 
                 Nothing -> do
                     tick Log.ClientLeft
-                    clientPut cl $ "Good bye!\n"
-    loop
+--                    clientPut cl $ "Good bye!\n"
+    cl <- initClient srv hdl
+    loop cl
 
+initClient :: Server -> Handle -> IO Client
+initClient srv hdl = do
+    cl <- newClient hdl
+    tick srv $ Log.ClientNew
+    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
+    return cl
 
 
 groupOperations :: Server -> Client -> IO (Maybe Group)
@@ -47,47 +48,50 @@ groupOperations srv@Server{..} cl@Client{..} = do
     grs :: [(GroupId, Group)]
         <- atomically $ getAllGroups srv
 
-    if null grs
-        then do
-            clientPut cl $ "There are no chat rooms now.\nCreating new one ...\n"
-            gid :: GroupId
-                <- Uniq.hashUnique <$> Uniq.newUnique
-            _gr <- atomically $ createGroup srv gid
-            groupOperations srv cl
-            
-        else do
-            clientPut cl $ mconcat
-                [ "Current rooms: " <> (mconcat $ intersperse "," $ map (expr . fst) grs) <> "\n"
-                ,"Select one, \"/new\" or \"/quit\"> "
-                ]
+    clientPut cl $ mconcat
+        [ "{\"rooms\":["
+        , mconcat $ intersperse "," $ map (expr . fst) grs
+        , "],"
+        , "\"status\":\"groupSelect\""
+        , "}"
+        , "\n"
+        ]
 
-            input :: ShortByteString
-                <- rstrip <$> clientGet cl
+    input :: ShortByteString
+        <- rstrip <$> clientGet cl
 
-            logger $ "Group ops: " <> expr input
+--    logger $ "Group select: " <> expr input
 
-            case input of
-                "/new" -> do
-                    gid :: GroupId
-                        <- Uniq.hashUnique <$> Uniq.newUnique
-                    _gr <- atomically $ createGroup srv gid
-                    tick Log.GroupNew
+    case words input of
+        ["/quit"] -> return Nothing
 
+        ["/new", gid'] -> do
+            case readInt gid' of
+                Nothing -> do
                     groupOperations srv cl
-
-                "/quit" -> do
-                    return Nothing
-
-                _ -> do
-                
-                    case readInt input of
+                Just (gid, _) -> do
+                    mgr <- atomically $ getGroup srv gid
+                    case mgr of
                         Nothing -> do
+                            _gr <- atomically $ createGroup srv gid
+                            tick Log.GroupNew
                             groupOperations srv cl
-                        Just (gid, _) -> do
-                            mgr <- atomically $ getGroup srv gid
-                            case mgr of
-                                Nothing -> groupOperations srv cl
-                                Just gr -> return $ Just gr
+                        Just _ -> groupOperations srv cl
+
+        ["/join", gid'] -> do
+
+            case readInt gid' of
+                Nothing -> do
+                    groupOperations srv cl
+                Just (gid, _) -> do
+                    mgr <- atomically $ getGroup srv gid
+                    case mgr of
+                        Nothing -> do
+                            gr <- atomically $ createGroup srv gid
+                            tick Log.GroupNew
+                            return $ Just gr
+                        Just gr -> return $ Just gr
+        _ -> groupOperations srv cl
 
 
 notifyClient :: Server -> Group -> Client -> IO () -> IO ()
@@ -95,14 +99,17 @@ notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 
     -- Notice group to User
     clientPut cl $ mconcat
-        [ "\n"
-        , "Hello, this is easy-chat.\n"
-        , "Your ClientId is <" <> expr clientId <> ">,\n"
-        , "Your GroupId is <" <> expr groupId <> ">.\n"
-        , "Type \"/quit\" when you quit.\n\n"
+        [ "{\"status\":\"joined\"}"
+        , "\n"
         ]
+--        [ "\n"
+--        , "Hello, this is easy-chat.\n"
+--        , "Your ClientId is <" <> expr clientId <> ">,\n"
+--        , "Your GroupId is <" <> expr groupId <> ">.\n"
+--        , "Type \"/quit\" when you quit.\n\n"
+--        ]
 
-    onJoin
+--    onJoin
 
     runClient srv gr cl
 
@@ -122,7 +129,7 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
             str' <- clientGet cl
 
             let str = rstrip str' -- Chop newline
-            logger $ "Client<" <> (expr clientId) <> "> entered raw strings: " <> expr str
+--            logger $ "Client<" <> (expr clientId) <> "> entered raw strings: " <> expr str
             atomically $ sendMessage cl (Command str)
 
         server :: IO ()
@@ -149,7 +156,7 @@ handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do
         Command str -> do
             case words str of
                 ["/quit"] -> do
-                    clientPut cl $ "You left room.\n"
+--                    clientPut cl $ "You left room.\n"
                     return False
                 [] -> do
                     -- Ignore empty messages.

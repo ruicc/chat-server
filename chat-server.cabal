@@ -38,6 +38,7 @@ executable chat-server
       base >= 4.7 && <4.8
     , async
     , stm
+    , transformers
 
     , containers
     , bytestring
