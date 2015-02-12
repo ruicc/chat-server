@@ -1,7 +1,5 @@
 module App.Prelude
     ( module P
---    , module B
-    , module B.Short
     , module Control.Applicative
     , module Control.Monad
     , module Control.Concurrent
@@ -9,7 +7,11 @@ module App.Prelude
     , module Control.Concurrent.Async
     , module Control.Exception
     , module Data.Monoid
+    -- * ShortByteString
+    , ShortByteString, toShort, fromShort
+    -- * Show
     , expr
+    -- * System.IO
     , putStr, putStrLn
     , hPutStr, hPutStrLn, hGetLine
     , IO.Handle, IO.hFlush
@@ -17,6 +19,8 @@ module App.Prelude
     , IO.BufferMode(..)
     , words, rstrip
     , readInt
+    -- * Conversion between Text and ShortByteString
+    , toText, fromText
     )
     where
 
@@ -32,37 +36,47 @@ import           Data.Monoid
 import           Data.Char (isSpace)
 --import qualified Data.ByteString as B hiding (putStrLn, putStr)
 import qualified Data.ByteString.Char8 as B.Char
-import           Data.ByteString.Short (ShortByteString)
-import qualified Data.ByteString.Short as B.Short
+import qualified Data.ByteString.Lazy as BL
+import           Data.ByteString.Short (ShortByteString, toShort, fromShort)
+import qualified Data.Text as T
+import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
 
 import qualified System.IO as IO
 
 expr :: Show a => a -> ShortByteString
-expr = B.Short.toShort . B.Char.pack . P.show
+expr = toShort . B.Char.pack . P.show
 
 putStrLn :: ShortByteString -> IO ()
-putStrLn = B.Char.putStrLn . B.Short.fromShort
+putStrLn = B.Char.putStrLn . fromShort
 
 putStr :: ShortByteString -> IO ()
-putStr = B.Char.putStr . B.Short.fromShort
+putStr = B.Char.putStr . fromShort
 
 hPutStr :: IO.Handle -> ShortByteString -> IO ()
-hPutStr hdl sb = B.Char.hPutStr hdl (B.Short.fromShort sb)
+hPutStr hdl sb = B.Char.hPutStr hdl (fromShort sb)
 
 hPutStrLn :: IO.Handle -> ShortByteString -> IO ()
-hPutStrLn hdl sb = B.Char.hPutStrLn hdl (B.Short.fromShort sb)
+hPutStrLn hdl sb = B.Char.hPutStrLn hdl (fromShort sb)
 
 hGetLine :: IO.Handle -> IO ShortByteString
-hGetLine hdl = B.Short.toShort <$> B.Char.hGetLine hdl
+hGetLine hdl = toShort <$> B.Char.hGetLine hdl
 
 words :: ShortByteString -> [ShortByteString]
-words sb = B.Short.toShort <$> (B.Char.words $ B.Short.fromShort $ sb)
+words sb = toShort <$> (B.Char.words $ fromShort $ sb)
 
 rstrip :: ShortByteString -> ShortByteString
-rstrip = B.Short.toShort . B.Char.reverse . B.Char.dropWhile isSpace . B.Char.reverse . B.Short.fromShort
+rstrip = toShort . B.Char.reverse . B.Char.dropWhile isSpace . B.Char.reverse . fromShort
 
 readInt :: ShortByteString -> Maybe (Int, ShortByteString)
-readInt sb = fmap (\ (i,b) -> (i, B.Short.toShort b)) $ B.Char.readInt $ B.Short.fromShort sb
+readInt sb = fmap (\ (i,b) -> (i, toShort b)) $ B.Char.readInt $ fromShort sb
 
+------------------------------------------------------------------------------------------
+-- | Text and ShortByteString
+--
+-- Text is used in JSON or something UTF8-encoded text.
 
+toText :: ShortByteString -> T.Text
+toText = decodeUtf8 . fromShort
 
+fromText :: T.Text -> ShortByteString
+fromText = toShort . encodeUtf8
