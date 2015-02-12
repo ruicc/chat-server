@@ -9,7 +9,7 @@ import           System.IO as IO
 
 import qualified Log as Log
 import           Types
-import           Client (clientProcess)
+import           Server (runClientThread)
 
 
 runChatServer :: Int -> IO ()
@@ -36,4 +36,4 @@ runChatServer port = withSocketsDo $ do
                 errorCollector server e
             errHdlr _ = return ()
 
-        forkFinally (clientProcess server hdl) (\ e -> errHdlr e >> hClose hdl)
+        forkFinally (runClientThread server hdl) (\ e -> errHdlr e >> hClose hdl)

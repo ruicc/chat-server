@@ -28,7 +28,7 @@ executable chat-server
   main-is:
     Main.hs
   other-modules:
-      Chat, Log, Types, Client, Utils, App.Prelude
+      Chat, Log, Types, Server, Utils, App.Prelude
   default-extensions:
       NoImplicitPrelude
     , ScopedTypeVariables
@@ -42,7 +42,7 @@ executable chat-server
 
     , containers
     , bytestring
-    , utf8-string
+    , unix-time
 
     , network >= 2.6
     , ekg

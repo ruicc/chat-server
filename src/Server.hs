@@ -1,4 +1,4 @@
-module Client (clientProcess) where
+module Server (runClientThread) where
 
 import           App.Prelude
 
@@ -9,8 +9,8 @@ import           Types
 
 
 
-clientProcess :: Server -> Handle -> IO ()
-clientProcess srv@Server{..} hdl = do
+runClientThread :: Server -> Handle -> IO ()
+runClientThread srv@Server{..} hdl = do
     let
         loop cl = do
 
