@@ -5,6 +5,7 @@ import qualified App.Time as Time
 
 import           Data.List (intersperse)
 import           Data.Unique as Uniq
+import qualified Data.IntMap as IM
 
 import qualified Log as Log
 import           Types
@@ -20,21 +21,22 @@ runClientThread srv@Server{..} hdl = do
             grs :: [(GroupId, Group)]
                 <- atomically $ getAllGroups srv
 
-            clientPut cl $ mconcat
-                [ "{\"rooms\":["
-                , mconcat $ intersperse "," $ map (expr . fst) grs
-                , "],"
-                , "\"status\":\"groupSelect\""
-                , "}"
-                , "\n"
-                ]
+            clientPut cl $ "/groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
+--            clientPut cl $ mconcat
+--                [ "{\"rooms\":["
+--                , mconcat $ intersperse "," $ map (expr . fst) grs
+--                , "],"
+--                , "\"status\":\"groupSelect\""
+--                , "}"
+--                , "\n"
+--                ]
 
         getUserInput :: Client -> IO ShortByteString
         getUserInput cl = do
             input :: ShortByteString
-                <- rstrip <$> clientGet cl
+                <- clientGet srv cl
 
-            logger $ "Group select: " <> expr input
+--            logger $ "Group select: " <> expr input
             return input
 
         loop :: Client -> IO ()
@@ -68,7 +70,7 @@ runClientThread srv@Server{..} hdl = do
                                             (groupCancelWaiting gr) srv gr
 
                                         restore (notifyClient srv gr cl onJoin)
-                                                -- Catch any exception defined by Clientexception.
+                                                -- Catch any exception defined by ClientException.
                                                 `catch` (\ (_ :: ClientException) -> return ())
                                                 -- Clean up
                                                 `finally` (join $ atomically $ removeClient srv cl gr)
@@ -90,7 +92,7 @@ runClientThread srv@Server{..} hdl = do
                                 case mNewGroup of
                                     Just (gr, onJoin) -> do
                                         restore (notifyClient srv gr cl onJoin)
-                                                -- Catch any exception defined by Clientexception.
+                                                -- Catch any exception defined by ClientException.
                                                 `catch` (\ (_ :: ClientException) -> return ())
                                                 -- Clean up
                                                 `finally` (join $ atomically $ removeClient srv cl gr)
@@ -131,7 +133,8 @@ initClient :: Server -> Handle -> IO Client
 initClient srv hdl = do
     cl <- newClient hdl
     tick srv $ Log.ClientNew
-    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
+    clientPut cl $ "/init " <> (expr $ clientId cl) <> "\n"
+--    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
     return cl
 
 
@@ -139,10 +142,11 @@ notifyClient :: Server -> Group -> Client -> IO () -> IO ()
 notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 
     -- Notice group to User
-    clientPut cl $ mconcat
-        [ "{\"event\":\"join-room\"}"
-        , "\n"
-        ]
+    clientPut cl $ "/event join " <> expr groupId <> "\n"
+--    clientPut cl $ mconcat
+--        [ "{\"event\":\"join-room\"}"
+--        , "\n"
+--        ]
 
     onJoin
 
@@ -161,9 +165,8 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
 
         receiver :: IO ()
         receiver = forever $ do
-            str' <- clientGet cl
+            str <- clientGet srv cl
 
-            let str = rstrip str' -- Chop newline
 --            logger $ "Client<" <> (expr clientId) <> "> entered raw strings: " <> expr str
             atomically $ sendMessage cl (Command str)
 
@@ -181,6 +184,78 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
     -- Spawn 3 linked threads.
     race_ (broadcastReceiver broadcastCh) (race_ receiver server)
 
+
+-- | Add client to group. Returned action is to show latest history.
+addClient :: Server -> Client -> Group -> STM (Maybe (IO ()))
+addClient Server{..} cl@Client{..} gr@Group{..} = do
+    clientMap <- readTVar groupMembers
+    cnt <- readTVar groupMemberCount
+    gameSt <- getGameStatus gr
+
+    if IM.member clientId clientMap
+        -- User has already joined.
+        then return Nothing
+
+        else if cnt >= groupCapacity || gameSt == GroupDeleted
+            -- Room is full.
+            then return Nothing
+
+            else do -- STM
+                writeTVar groupMembers $ IM.insert clientId cl clientMap
+                modifyTVar' groupMemberCount succ
+
+                -- To next state
+                when (cnt + 1 == groupCapacity) $ changeGameStatus gr BeforePlay
+
+                -- TODO: Use it later
+                hist :: [Message]
+                    <- getHistory gr
+
+                sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is joined.")
+
+                return $ Just $ do -- IO
+                    -- Show history
+                    forM_ (reverse hist) $ \msg -> output cl msg
+                    tick Log.GroupJoin
+                    logger $ mconcat
+                        [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."
+                        , " Room members are <" <> expr (cnt + 1) <> ">."
+                        ]
+
+
+removeClient :: Server -> Client -> Group -> STM (IO ())
+removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
+    cnt <- readTVar groupMemberCount
+    mcl :: Maybe Client
+        <- getClient clientId gr
+    case mcl of
+        Just _ -> do
+            modifyTVar' groupMembers (IM.delete clientId)
+            modifyTVar' groupMemberCount pred
+
+            sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
+
+            when (cnt == 1) $ deleteGroup srv gr
+
+            return $ do
+                clientPut cl $ mconcat
+                    [ "/event leave"
+                    , "\n"
+                    ]
+--                    [ "{\"event\":\"leave-room\"}"
+--                    , "\n"
+--                    ]
+                tick Log.GroupLeft
+                logger $ mconcat
+                    [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
+                    , " Room members are <" <> (expr $ cnt - 1) <> ">."
+                    ]
+        Nothing -> do
+            return $ do
+                logger $ mconcat
+                    [ "Client<" <> expr clientId <> "> doesn't exist in Group<" <> expr groupId <> ">."
+                    , " Room members are <" <> expr cnt <> ">."
+                    ]
 
 handleMessage :: Server -> Group -> Client -> Message -> IO Bool
 handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do

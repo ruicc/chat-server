@@ -2,7 +2,7 @@ module Types where
 
 import App.Prelude
 
-import qualified Data.Map as Map
+import qualified Data.IntMap as IM
 import qualified Data.Unique as Uniq
 
 import qualified Log as Log
@@ -30,7 +30,7 @@ data Group = Group
     , groupCreatedAt :: Int -- ^ UnixTime
     , groupTimeout :: Int -- ^ Seconds
 
-    , groupMembers :: TVar (Map.Map ClientId Client)
+    , groupMembers :: TVar (IM.IntMap Client)
     , groupMemberCount :: TVar Int
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
     , groupHistory :: TVar [Message]
@@ -38,7 +38,7 @@ data Group = Group
     , groupCancelWaiting :: Server -> Group -> IO ()
     }
 data Server = Server
-    { serverGroups :: TVar (Map.Map GroupId Group)
+    { serverGroups :: TVar (IM.IntMap Group)
     , logger :: ShortByteString -> IO ()
     , tick :: Log.AppEvent -> IO ()
     , errorCollector :: SomeException -> IO ()
@@ -71,7 +71,7 @@ newServer logCh statCh erCh = do
         logger str = atomically $ writeTChan logCh str
         tick ev = atomically $ writeTChan statCh ev
         errorCollector e = atomically $ writeTChan erCh e
-    gs <- newTVarIO Map.empty
+    gs <- newTVarIO IM.empty
 
     return $ Server gs logger tick errorCollector
 
@@ -81,7 +81,7 @@ newServer logCh statCh erCh = do
 
 newGroup :: GroupId -> ShortByteString -> Int -> Timestamp -> Int -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
 newGroup gid name capacity ts timeout = do
-    clientMap <- newTVar Map.empty
+    clientMap <- newTVar IM.empty
     cnt <- newTVar 0
     bch <- newBroadcastTChan
     history <- newTVar []
@@ -102,22 +102,22 @@ newGroup gid name capacity ts timeout = do
 getGroup :: Server -> GroupId -> STM (Maybe Group)
 getGroup Server{..} gid = do
     groupMap <- readTVar serverGroups
-    return $ Map.lookup gid groupMap
+    return $ IM.lookup gid groupMap
 
 getAllGroups :: Server -> STM [(GroupId, Group)]
 getAllGroups Server{..} = do
     groupMap <- readTVar serverGroups
-    return $ Map.toList groupMap
+    return $ IM.toList groupMap
 
 createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> Int -> Int -> STM Group
 createGroup Server{..} gid name (GroupCapacity capacity) ts timeout = do
     gr <- newGroup gid name capacity ts timeout
-    modifyTVar' serverGroups $ Map.insert (groupId gr) gr
+    modifyTVar' serverGroups $ IM.insert (groupId gr) gr
     return gr
 
 deleteGroup :: Server -> Group -> STM ()
 deleteGroup Server{..} Group{..} = do
-    modifyTVar' serverGroups $ Map.delete groupId
+    modifyTVar' serverGroups $ IM.delete groupId
 
 
 ------------------------------------------------------------------------------------------
@@ -139,10 +139,11 @@ newClient hdl = do
         , clientThreadId = tid
         }
 
-clientGet :: Client -> IO ShortByteString
-clientGet Client{..} = do
-    str <- hGetLine clientHandle
+clientGet :: Server -> Client -> IO ShortByteString
+clientGet Server{..} Client{..} = do
+    str <- rstrip <$> hGetLine clientHandle
     hFlush clientHandle
+    logger $ "(raw) " <> str
     return str
 
 clientPut :: Client -> ShortByteString -> IO ()
@@ -193,77 +194,8 @@ output Client{..} msg = do
 getClient :: ClientId -> Group -> STM (Maybe Client)
 getClient cid Group{..} = do
     clientMap <- readTVar groupMembers
-    return $ Map.lookup cid clientMap
+    return $ IM.lookup cid clientMap
 
-
--- | Add client to group. Returned action is to show latest history.
-addClient :: Server -> Client -> Group -> STM (Maybe (IO ()))
-addClient Server{..} cl@Client{..} gr@Group{..} = do
-    clientMap <- readTVar groupMembers
-    cnt <- readTVar groupMemberCount
-    gameSt <- getGameStatus gr
-
-    if Map.member clientId clientMap
-        -- User has already joined.
-        then return Nothing
-
-        else if cnt >= groupCapacity || gameSt == GroupDeleted
-            -- Room is full.
-            then return Nothing
-
-            else do -- STM
-                writeTVar groupMembers $ Map.insert clientId cl clientMap
-                modifyTVar' groupMemberCount succ
-
-                -- To next state
-                when (cnt + 1 == groupCapacity) $ changeGameStatus gr BeforePlay
-
-                -- TODO: Use it later
-                hist :: [Message]
-                    <- getHistory gr
-
-                sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is joined.")
-
-                return $ Just $ do -- IO
-                    -- Show history
-                    forM_ (reverse hist) $ \msg -> output cl msg
-                    tick Log.GroupJoin
-                    logger $ mconcat
-                        [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."
-                        , " Room members are <" <> expr (cnt + 1) <> ">."
-                        ]
-
-
-removeClient :: Server -> Client -> Group -> STM (IO ())
-removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
-    cnt <- readTVar groupMemberCount
-    mcl :: Maybe Client
-        <- getClient clientId gr
-    case mcl of
-        Just _ -> do
-            modifyTVar' groupMembers (Map.delete clientId)
-            modifyTVar' groupMemberCount pred
-
-            sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
-
-            when (cnt == 1) $ deleteGroup srv gr
-
-            return $ do
-                clientPut cl $ mconcat
-                    [ "{\"event\":\"leave-room\"}"
-                    , "\n"
-                    ]
-                tick Log.GroupLeft
-                logger $ mconcat
-                    [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
-                    , " Room members are <" <> expr cnt <> ">."
-                    ]
-        Nothing -> do
-            return $ do
-                logger $ mconcat
-                    [ "Client<" <> expr clientId <> "> doesn't exist in Group<" <> expr groupId <> ">."
-                    , " Room members are <" <> expr cnt <> ">."
-                    ]
 
 cancelWaiting :: Server -> Group -> IO ()
 cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
@@ -272,7 +204,7 @@ cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
     case gameSt of
         Waiting -> do
             members :: [(ClientId, Client)]
-                <- Map.toList <$> readTVar groupMembers
+                <- IM.toList <$> readTVar groupMembers
             changeGameStatus gr GroupDeleted
             deleteGroup srv gr
 

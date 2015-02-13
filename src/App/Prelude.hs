@@ -14,7 +14,7 @@ module App.Prelude
     -- * System.IO
     , putStr, putStrLn
     , hPutStr, hPutStrLn, hGetLine
-    , IO.Handle, IO.hFlush
+    , IO.Handle, IO.hFlush, IO.hClose
     , IO.hSetBuffering
     , IO.BufferMode(..)
     , words, rstrip
