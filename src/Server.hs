@@ -140,12 +140,6 @@ notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
         [ "{\"event\":\"join-room\"}"
         , "\n"
         ]
---        [ "\n"
---        , "Hello, this is easy-chat.\n"
---        , "Your ClientId is <" <> expr clientId <> ">,\n"
---        , "Your GroupId is <" <> expr groupId <> ">.\n"
---        , "Type \"/quit\" when you quit.\n\n"
---        ]
 
     onJoin
 
