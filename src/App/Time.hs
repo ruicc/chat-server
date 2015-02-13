@@ -5,7 +5,6 @@ module App.Time
     ) where
 
 import           App.Prelude
-import           Control.Applicative
 
 import           Data.UnixTime (getUnixTime, UnixTime(..))
 import           Foreign.C.Types (CTime(..))

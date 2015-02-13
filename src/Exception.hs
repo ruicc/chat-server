@@ -7,5 +7,8 @@ import Data.Typeable
 data ClientException = KickedFromRoom
     deriving (Show, Typeable)
 
-instance Exception ClientException
+data QuitGame = QuitGame
+    deriving (Show, Typeable)
 
+instance Exception ClientException
+instance Exception QuitGame

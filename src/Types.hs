@@ -4,7 +4,6 @@ import App.Prelude
 
 import qualified Data.Map as Map
 import qualified Data.Unique as Uniq
-import qualified App.Time as Time
 
 import qualified Log as Log
 import           Exception

@@ -36,7 +36,6 @@ import           Data.Monoid
 import           Data.Char (isSpace)
 --import qualified Data.ByteString as B hiding (putStrLn, putStr)
 import qualified Data.ByteString.Char8 as B.Char
-import qualified Data.ByteString.Lazy as BL
 import           Data.ByteString.Short (ShortByteString, toShort, fromShort)
 import qualified Data.Text as T
 import           Data.Text.Encoding (decodeUtf8, encodeUtf8)

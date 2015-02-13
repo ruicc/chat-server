@@ -45,7 +45,7 @@ runClientThread srv@Server{..} hdl = do
                 <- getUserInput cl
 
             case words input of
-                ["/quit"] -> tick Log.ClientLeft
+                ["/quit"] -> throwIO QuitGame
 
                 ["/new", name, capacity', timeout'] -> do
                     case (readInt capacity', readInt timeout') of
@@ -67,8 +67,10 @@ runClientThread srv@Server{..} hdl = do
                                             threadDelay $ groupTimeout gr * 1000 * 1000
                                             (groupCancelWaiting gr) srv gr
 
-                                        restore (notifyClient srv gr cl onJoin
-                                                `catch` \ (e :: ClientException) -> return ())
+                                        restore (notifyClient srv gr cl onJoin)
+                                                -- Catch any exception defined by Clientexception.
+                                                `catch` (\ (_ :: ClientException) -> return ())
+                                                -- Clean up
                                                 `finally` (join $ atomically $ removeClient srv cl gr)
                                     Nothing -> return () -- TODO: エラー理由
                             loop cl
@@ -87,8 +89,10 @@ runClientThread srv@Server{..} hdl = do
                                         (getGroup srv gid)
                                 case mNewGroup of
                                     Just (gr, onJoin) -> do
-                                        restore (notifyClient srv gr cl onJoin
-                                                `catch` \ (e :: ClientException) -> return ())
+                                        restore (notifyClient srv gr cl onJoin)
+                                                -- Catch any exception defined by Clientexception.
+                                                `catch` (\ (_ :: ClientException) -> return ())
+                                                -- Clean up
                                                 `finally` (join $ atomically $ removeClient srv cl gr)
                                     Nothing -> return () -- TODO: エラー理由
                             loop cl
@@ -98,8 +102,7 @@ runClientThread srv@Server{..} hdl = do
                 _ -> do
                     loop cl
 
-
-        -- This signature might be a bit scary but it just combines 2 processes,
+        -- This signature might be a bit scary, but it just combines 2 processes,
         -- getGr and addClient.
         getGroupAndJoin :: Client -> STM (Maybe Group) -> IO (Maybe (Group, IO ()))
         getGroupAndJoin cl getGr = join $ atomically $ do
@@ -187,12 +190,18 @@ handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do
     case msg of
         Command str -> do
             case words str of
-                ["/quit"] -> do
---                    clientPut cl $ "You left room.\n"
+                ["/leave"] -> do
+                    -- Leave the room.
                     return False
+
+                ["/quit"] -> do
+                    -- Quit the game.
+                    throwIO QuitGame
+
                 [] -> do
                     -- Ignore empty messages.
                     return True
+
                 _ -> do
                     tick Log.GroupChat
                     atomically $ sendBroadcast gr (Broadcast clientId str)

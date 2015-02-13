@@ -9,6 +9,7 @@ import           System.IO as IO
 
 import qualified Log as Log
 import           Types
+import           Exception
 import           Server (runClientThread)
 
 
@@ -31,9 +32,15 @@ runChatServer port = withSocketsDo $ do
 
 
         let
-            errHdlr :: Either SomeException () -> IO ()
-            errHdlr (Left e) = do
+            errHandler :: Either SomeException () -> IO ()
+            errHandler (Left e) = do
                 errorCollector server e
-            errHdlr _ = return ()
+            errHandler _ = return ()
 
-        forkFinally (runClientThread server hdl) (\ e -> errHdlr e >> hClose hdl)
+            -- QuitGame can be thrown anywhere, anytime.
+            quitHandler :: QuitGame -> IO ()
+            quitHandler QuitGame = tick server $ Log.ClientLeft
+
+        forkFinally
+                (runClientThread server hdl `catch` quitHandler)
+                (\ e -> errHandler e >> hClose hdl)
