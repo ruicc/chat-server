@@ -54,7 +54,7 @@ runClientThread srv@Server{..} hdl = do
 
                             mask $ \restore -> do
                                 mNewGroup :: Maybe (Group, IO ())
-                                    <- join $ atomically $ getGroupAndJoin
+                                    <- getGroupAndJoin
                                         cl
                                         (Just <$> createGroup srv gid name (GroupCapacity capacity) ts timeout)
                                 case mNewGroup of
@@ -74,7 +74,7 @@ runClientThread srv@Server{..} hdl = do
                         Just (gid, _) -> do
                             mask $ \restore -> do
                                 mNewGroup :: Maybe (Group, IO ())
-                                    <- join $ atomically $ getGroupAndJoin
+                                    <- getGroupAndJoin
                                         cl
                                         (getGroup srv gid)
                                 case mNewGroup of
@@ -90,10 +90,10 @@ runClientThread srv@Server{..} hdl = do
                     loop cl
 
 
-        -- This type seems to be scary but it just combines 2 process,
+        -- This signature might be a bit scary but it just combines 2 processes,
         -- getGr and addClient.
-        getGroupAndJoin :: Client -> STM (Maybe Group) -> STM (IO (Maybe (Group, IO ())))
-        getGroupAndJoin cl getGr = do
+        getGroupAndJoin :: Client -> STM (Maybe Group) -> IO (Maybe (Group, IO ()))
+        getGroupAndJoin cl getGr = join $ atomically $ do
 
             -- NOTICE: Getting a group might fail due to removing group.
             mgr <- getGr
