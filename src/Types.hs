@@ -7,6 +7,7 @@ import qualified Data.Unique as Uniq
 import qualified App.Time as Time
 
 import qualified Log as Log
+import           Exception
 
 ------------------------------------------------------------------------------------------
 -- | Types
@@ -21,6 +22,7 @@ data Client = Client
 --    , clientName :: ClientName
     , clientHandle :: Handle
     , clientChan :: TChan Message -- ^ Mailbox sent to this client
+    , clientThreadId :: ThreadId
     }
 data Group = Group
     { groupId :: GroupId
@@ -34,6 +36,7 @@ data Group = Group
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
     , groupHistory :: TVar [Message]
     , groupGameState :: TVar Game
+    , groupCancelWaiting :: Server -> Group -> IO ()
     }
 data Server = Server
     { serverGroups :: TVar (Map.Map GroupId Group)
@@ -51,7 +54,7 @@ data Game = Game
     { gameStatus :: GameStatus
     , deadClients :: [Client]
     }
-data GameStatus = Waiting | Playing | Result
+data GameStatus = Waiting | BeforePlay | Playing | Result
 
 newtype GroupCapacity = GroupCapacity Int
     deriving (Show, Read, Eq, Ord, Num)
@@ -80,10 +83,21 @@ newGroup :: GroupId -> ShortByteString -> Int -> Timestamp -> Int -> STM Group -
 newGroup gid name capacity ts timeout = do
     clientMap <- newTVar Map.empty
     cnt <- newTVar 0
-    history <- newTVar []
     bch <- newBroadcastTChan
+    history <- newTVar []
     gameSt <- newTVar $ Game Waiting []
-    return $ Group gid name capacity ts timeout clientMap cnt bch history gameSt
+    return $ Group
+            gid
+            name
+            capacity
+            ts
+            timeout
+            clientMap
+            cnt
+            bch
+            history
+            gameSt
+            cancelWaiting
 
 getGroup :: Server -> GroupId -> STM (Maybe Group)
 getGroup Server{..} gid = do
@@ -117,10 +131,12 @@ newClient hdl = do
         <- Uniq.hashUnique <$> Uniq.newUnique
     ch :: TChan Message
         <- newTChanIO
+    tid <- myThreadId
     return $ Client
         { clientId = cid
         , clientHandle = hdl
         , clientChan = ch
+        , clientThreadId = tid
         }
 
 clientGet :: Client -> IO ShortByteString
@@ -197,6 +213,10 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
             else do -- STM
                 writeTVar groupMembers $ Map.insert clientId cl clientMap
                 modifyTVar' groupMemberCount succ
+
+                -- To next state
+                when (cnt + 1 == groupCapacity) $ changeGameStatus gr BeforePlay
+
                 -- TODO: Use it later
                 hist :: [Message]
                     <- getHistory gr
@@ -214,7 +234,7 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
 
 
 removeClient :: Server -> Client -> Group -> STM (IO ())
-removeClient Server{..} Client{..} gr@Group{..} = do
+removeClient Server{..} cl@Client{..} gr@Group{..} = do
     mcl :: Maybe Client
         <- getClient clientId gr
     case mcl of
@@ -226,6 +246,10 @@ removeClient Server{..} Client{..} gr@Group{..} = do
             sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
 
             return $ do
+                clientPut cl $ mconcat
+                    [ "{\"event\":\"leave-room\"}"
+                    , "\n"
+                    ]
                 tick Log.GroupLeft
                 logger $ mconcat
                     [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
@@ -239,3 +263,26 @@ removeClient Server{..} Client{..} gr@Group{..} = do
                     , " Room members are <" <> expr cnt <> ">."
                     ]
 
+cancelWaiting :: Server -> Group -> IO ()
+cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
+    -- Check GameStatus
+    gameSt <- gameStatus <$> readTVar groupGameState
+    case gameSt of
+        Waiting -> do
+            members :: [(ClientId, Client)]
+                <- Map.toList <$> readTVar groupMembers
+            deleteGroup srv gr
+
+            return $ do
+                logger $ "CancelWaiting fired. Group<" <> expr groupId <> "> is removed"
+                forM_ members $ \ (cid, Client{..}) -> do
+                    logger $ "CancelWaiting: " <> expr cid
+                    throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
+        _ -> return $ do
+            logger "CancelWaiting fired, but do nothing"
+            return ()
+
+changeGameStatus :: Group -> GameStatus -> STM ()
+changeGameStatus Group{..} gst = do
+    game <- readTVar groupGameState
+    writeTVar groupGameState game { gameStatus = gst }

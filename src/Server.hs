@@ -8,6 +8,7 @@ import           Data.Unique as Uniq
 
 import qualified Log as Log
 import           Types
+import           Exception
 
 
 
@@ -59,8 +60,15 @@ runClientThread srv@Server{..} hdl = do
                                         (Just <$> createGroup srv gid name (GroupCapacity capacity) ts timeout)
                                 case mNewGroup of
                                     Just (gr, onJoin) -> do
-                                        -- TODO: Timeout process
-                                        restore (notifyClient srv gr cl onJoin)
+
+                                        -- Timeout
+                                        -- TODO: This is on mask. Is it OK??
+                                        void $ forkIO $ do
+                                            threadDelay $ groupTimeout gr * 1000 * 1000
+                                            (groupCancelWaiting gr) srv gr
+
+                                        restore (notifyClient srv gr cl onJoin
+                                                `catch` \ (e :: ClientException) -> return ())
                                                 `finally` (join $ atomically $ removeClient srv cl gr)
                                     Nothing -> return () -- TODO: エラー理由
                             loop cl
@@ -79,7 +87,8 @@ runClientThread srv@Server{..} hdl = do
                                         (getGroup srv gid)
                                 case mNewGroup of
                                     Just (gr, onJoin) -> do
-                                        restore (notifyClient srv gr cl onJoin)
+                                        restore (notifyClient srv gr cl onJoin
+                                                `catch` \ (e :: ClientException) -> return ())
                                                 `finally` (join $ atomically $ removeClient srv cl gr)
                                     Nothing -> return () -- TODO: エラー理由
                             loop cl
@@ -114,6 +123,7 @@ runClientThread srv@Server{..} hdl = do
     cl <- initClient srv hdl
     loop cl
 
+
 initClient :: Server -> Handle -> IO Client
 initClient srv hdl = do
     cl <- newClient hdl
@@ -122,38 +132,12 @@ initClient srv hdl = do
     return cl
 
 
---gettingGroup :: Server -> Client -> IO (STM (Maybe Group))
---gettingGroup srv@Server{..} cl@Client{..} = do
---
---    case words input of
---        ["/quit"] -> return $ return Nothing
---
---        ["/new", name, capacity', timeout'] -> do
---            case (readInt capacity', readInt timeout') of
---                (Just (capacity, _), Just (timeout, _)) -> do
---                    gid <- Uniq.hashUnique <$> Uniq.newUnique
---                    ts <- Time.getUnixTimeAsInt
---                    return $ Just <$> createGroup srv gid name (GroupCapacity capacity) ts timeout
---
---                _ -> do
---                    gettingGroup srv cl
---
---        ["/join", gid'] -> do
---
---            case readInt gid' of
---                Nothing -> do
---                    gettingGroup srv cl
---                Just (gid, _) -> do
---                    return $ getGroup srv gid
---        _ -> gettingGroup srv cl
-
-
 notifyClient :: Server -> Group -> Client -> IO () -> IO ()
 notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 
     -- Notice group to User
     clientPut cl $ mconcat
-        [ "{\"status\":\"joined\"}"
+        [ "{\"event\":\"join-room\"}"
         , "\n"
         ]
 --        [ "\n"

@@ -29,7 +29,7 @@ executable chat-server
   main-is:
     Main.hs
   other-modules:
-      Chat, Log, Types, Server, Utils
+      Chat, Log, Types, Server, Utils, Exception
     , App.Prelude
     , App.Time
     , App.Types.ClientMessage
@@ -39,6 +39,7 @@ executable chat-server
     , ScopedTypeVariables
     , OverloadedStrings
     , RecordWildCards
+    , DeriveDataTypeable
   build-depends:
       base >= 4.7 && <4.8
     , async
