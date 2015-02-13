@@ -14,36 +14,102 @@ import           Types
 runClientThread :: Server -> Handle -> IO ()
 runClientThread srv@Server{..} hdl = do
     let
+        showGroups :: Server -> Client -> IO ()
+        showGroups srv cl = do
+            grs :: [(GroupId, Group)]
+                <- atomically $ getAllGroups srv
+
+            clientPut cl $ mconcat
+                [ "{\"rooms\":["
+                , mconcat $ intersperse "," $ map (expr . fst) grs
+                , "],"
+                , "\"status\":\"groupSelect\""
+                , "}"
+                , "\n"
+                ]
+
+        getUserInput :: Client -> IO ShortByteString
+        getUserInput cl = do
+            input :: ShortByteString
+                <- rstrip <$> clientGet cl
+
+            logger $ "Group select: " <> expr input
+            return input
+
+        loop :: Client -> IO ()
         loop cl = do
 
-            -- Group manupilations
-            smGroup :: STM (Maybe Group)
-                <- gettingGroup srv cl
+            showGroups srv cl
+            input :: ShortByteString
+                <- getUserInput cl
 
-            mask $ \restore -> do
-                -- Execute Get and Join *ATOMICALLY*
-                mGroup <- atomically $ do
-                    -- NOTICE: Getting a group might fail due to room capacity.
-                    mgr <- smGroup
-                    case mgr of
-                        Just gr -> do
-                            onJoin <- addClient srv cl gr
-                            return $ Just (gr, onJoin)
+            case words input of
+                ["/quit"] -> tick Log.ClientLeft
+
+                ["/new", name, capacity', timeout'] -> do
+                    case (readInt capacity', readInt timeout') of
+                        (Just (capacity, _), Just (timeout, _)) -> do
+                            gid <- Uniq.hashUnique <$> Uniq.newUnique
+                            ts <- Time.getUnixTimeAsInt
+
+                            mask $ \restore -> do
+                                mNewGroup :: Maybe (Group, IO ())
+                                    <- join $ atomically $ getGroupAndJoin
+                                        cl
+                                        (Just <$> createGroup srv gid name (GroupCapacity capacity) ts timeout)
+                                case mNewGroup of
+                                    Just (gr, onJoin) -> do
+                                        -- TODO: Timeout process
+                                        restore (notifyClient srv gr cl onJoin)
+                                                `finally` (join $ atomically $ removeClient srv cl gr)
+                                    Nothing -> return () -- TODO: エラー理由
+                            loop cl
+
+                        _   -> do
+                            loop cl
+
+                ["/join", gid'] -> do
+
+                    case readInt gid' of
+                        Just (gid, _) -> do
+                            mask $ \restore -> do
+                                mNewGroup :: Maybe (Group, IO ())
+                                    <- join $ atomically $ getGroupAndJoin
+                                        cl
+                                        (getGroup srv gid)
+                                case mNewGroup of
+                                    Just (gr, onJoin) -> do
+                                        restore (notifyClient srv gr cl onJoin)
+                                                `finally` (join $ atomically $ removeClient srv cl gr)
+                                    Nothing -> return () -- TODO: エラー理由
+                            loop cl
 
                         Nothing -> do
-                            -- Getting group failed..
-                            return Nothing
-                _ <- case mGroup of
-                    Just (gr, onJoin) ->
-                            restore (notifyClient srv gr cl onJoin)
-                                    `finally` (join $ atomically $ removeClient srv cl gr)
+                            loop cl
+                _ -> do
+                    loop cl
 
-                    Nothing -> loop cl
 
-                -- User left the group.
-                return ()
+        -- This type seems to be scary but it just combines 2 process,
+        -- getGr and addClient.
+        getGroupAndJoin :: Client -> STM (Maybe Group) -> STM (IO (Maybe (Group, IO ())))
+        getGroupAndJoin cl getGr = do
 
-            loop cl
+            -- NOTICE: Getting a group might fail due to removing group.
+            mgr <- getGr
+            case mgr of
+                Just gr -> do
+                    -- NOTICE: Joining a group might fail due to room capacity.
+                    mOnJoin <- addClient srv cl gr
+                    case mOnJoin of
+                        -- OK, User joined.
+                        Just onJoin -> return $ return $ Just (gr, onJoin)
+                        -- Room capacity is full.
+                        Nothing -> return $ return $ Nothing
+
+                Nothing -> do
+                    -- Getting group failed..
+                    return $ return $ Nothing
 
     cl <- initClient srv hdl
     loop cl
@@ -56,46 +122,30 @@ initClient srv hdl = do
     return cl
 
 
-gettingGroup :: Server -> Client -> IO (STM (Maybe Group))
-gettingGroup srv@Server{..} cl@Client{..} = do
-    grs :: [(GroupId, Group)]
-        <- atomically $ getAllGroups srv
-
-    clientPut cl $ mconcat
-        [ "{\"rooms\":["
-        , mconcat $ intersperse "," $ map (expr . fst) grs
-        , "],"
-        , "\"status\":\"groupSelect\""
-        , "}"
-        , "\n"
-        ]
-
-    input :: ShortByteString
-        <- rstrip <$> clientGet cl
-
-    logger $ "Group select: " <> expr input
-
-    case words input of
-        ["/quit"] -> return $ return Nothing
-
-        ["/new", name, timeout'] -> do
-            case readInt timeout' of
-                Just (timeout, _) -> do
-                    gid <- Uniq.hashUnique <$> Uniq.newUnique
-                    ts <- Time.getUnixTimeAsInt
-                    return $ Just <$> createGroup srv gid name ts timeout
-
-                Nothing -> do
-                    gettingGroup srv cl
-
-        ["/join", gid'] -> do
-
-            case readInt gid' of
-                Nothing -> do
-                    gettingGroup srv cl
-                Just (gid, _) -> do
-                    return $ getGroup srv gid
-        _ -> gettingGroup srv cl
+--gettingGroup :: Server -> Client -> IO (STM (Maybe Group))
+--gettingGroup srv@Server{..} cl@Client{..} = do
+--
+--    case words input of
+--        ["/quit"] -> return $ return Nothing
+--
+--        ["/new", name, capacity', timeout'] -> do
+--            case (readInt capacity', readInt timeout') of
+--                (Just (capacity, _), Just (timeout, _)) -> do
+--                    gid <- Uniq.hashUnique <$> Uniq.newUnique
+--                    ts <- Time.getUnixTimeAsInt
+--                    return $ Just <$> createGroup srv gid name (GroupCapacity capacity) ts timeout
+--
+--                _ -> do
+--                    gettingGroup srv cl
+--
+--        ["/join", gid'] -> do
+--
+--            case readInt gid' of
+--                Nothing -> do
+--                    gettingGroup srv cl
+--                Just (gid, _) -> do
+--                    return $ getGroup srv gid
+--        _ -> gettingGroup srv cl
 
 
 notifyClient :: Server -> Group -> Client -> IO () -> IO ()
@@ -113,7 +163,7 @@ notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 --        , "Type \"/quit\" when you quit.\n\n"
 --        ]
 
---    onJoin
+    onJoin
 
     runClient srv gr cl
 

@@ -35,6 +35,7 @@ executable chat-server
     , App.Types.ClientMessage
   default-extensions:
       NoImplicitPrelude
+    , GeneralizedNewtypeDeriving
     , ScopedTypeVariables
     , OverloadedStrings
     , RecordWildCards

@@ -25,11 +25,12 @@ data Client = Client
 data Group = Group
     { groupId :: GroupId
     , groupName :: GroupName
+    , groupCapacity :: Int
     , groupCreatedAt :: Int -- ^ UnixTime
     , groupTimeout :: Int -- ^ Seconds
 
-    , groupClients :: TVar (Map.Map ClientId Client)
-    , groupClientCount :: TVar Int
+    , groupMembers :: TVar (Map.Map ClientId Client)
+    , groupMemberCount :: TVar Int
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
     , groupHistory :: TVar [Message]
     , groupGameState :: TVar Game
@@ -52,7 +53,10 @@ data Game = Game
     }
 data GameStatus = Waiting | Playing | Result
 
+newtype GroupCapacity = GroupCapacity Int
+    deriving (Show, Read, Eq, Ord, Num)
 
+type Timestamp = Int
 
 ------------------------------------------------------------------------------------------
 -- | Server
@@ -72,14 +76,14 @@ newServer logCh statCh erCh = do
 ------------------------------------------------------------------------------------------
 -- | Group
 
-newGroup :: GroupId -> ShortByteString -> Int -> Int -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
-newGroup gid name ts timeout = do
+newGroup :: GroupId -> ShortByteString -> Int -> Timestamp -> Int -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
+newGroup gid name capacity ts timeout = do
     clientMap <- newTVar Map.empty
     cnt <- newTVar 0
     history <- newTVar []
     bch <- newBroadcastTChan
     gameSt <- newTVar $ Game Waiting []
-    return $ Group gid name ts timeout clientMap cnt bch history gameSt
+    return $ Group gid name capacity ts timeout clientMap cnt bch history gameSt
 
 getGroup :: Server -> GroupId -> STM (Maybe Group)
 getGroup Server{..} gid = do
@@ -91,9 +95,9 @@ getAllGroups Server{..} = do
     groupMap <- readTVar serverGroups
     return $ Map.toList groupMap
 
-createGroup :: Server -> GroupId -> ShortByteString -> Int -> Int -> STM Group
-createGroup Server{..} gid name ts timeout = do
-    gr <- newGroup gid name ts timeout
+createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> Int -> Int -> STM Group
+createGroup Server{..} gid name (GroupCapacity capacity) ts timeout = do
+    gr <- newGroup gid name capacity ts timeout
     modifyTVar' serverGroups $ Map.insert (groupId gr) gr
     return gr
 
@@ -172,40 +176,41 @@ output Client{..} msg = do
 
 getClient :: ClientId -> Group -> STM (Maybe Client)
 getClient cid Group{..} = do
-    clientMap <- readTVar groupClients
+    clientMap <- readTVar groupMembers
     return $ Map.lookup cid clientMap
 
 
 -- | Add client to group. Returned action is to show latest history.
-addClient :: Server -> Client -> Group -> STM (IO ())
+addClient :: Server -> Client -> Group -> STM (Maybe (IO ()))
 addClient Server{..} cl@Client{..} gr@Group{..} = do
-    clientMap <- readTVar groupClients
+    clientMap <- readTVar groupMembers
+    cnt <- readTVar groupMemberCount
+
     if Map.member clientId clientMap
-        then do
-            cnt <- readTVar groupClientCount
-            return $ do
-                logger $ mconcat
-                    [ "Client<" <> expr clientId <> "> is already joined to Group<" <> expr groupId <> ">."
-                    , " Room members are <" <> expr cnt <> ">."
-                    ]
-        else do
-            writeTVar groupClients $ Map.insert clientId cl clientMap
-            modifyTVar' groupClientCount succ
-            cnt :: Int
-                <- readTVar groupClientCount
-            hist :: [Message]
-                <- getHistory gr
+        -- User has already joined.
+        then return Nothing
 
-            sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is joined.")
+        else if cnt >= groupCapacity
+            -- Room is full.
+            then return Nothing
 
-            return $ do
-                -- Show history
---                forM_ (reverse hist) $ \msg -> output cl msg
-                tick Log.GroupJoin
-                logger $ mconcat
-                    [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."
-                    , " Room members are <" <> expr cnt <> ">."
-                    ]
+            else do -- STM
+                writeTVar groupMembers $ Map.insert clientId cl clientMap
+                modifyTVar' groupMemberCount succ
+                -- TODO: Use it later
+                hist :: [Message]
+                    <- getHistory gr
+
+                sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is joined.")
+
+                return $ Just $ do -- IO
+                    -- Show history
+                    forM_ (reverse hist) $ \msg -> output cl msg
+                    tick Log.GroupJoin
+                    logger $ mconcat
+                        [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."
+                        , " Room members are <" <> expr (cnt + 1) <> ">."
+                        ]
 
 
 removeClient :: Server -> Client -> Group -> STM (IO ())
@@ -214,9 +219,9 @@ removeClient Server{..} Client{..} gr@Group{..} = do
         <- getClient clientId gr
     case mcl of
         Just _ -> do
-            modifyTVar' groupClients (Map.delete clientId)
-            modifyTVar' groupClientCount pred
-            cnt <- readTVar groupClientCount
+            modifyTVar' groupMembers (Map.delete clientId)
+            modifyTVar' groupMemberCount pred
+            cnt <- readTVar groupMemberCount
 
             sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
 
@@ -227,7 +232,7 @@ removeClient Server{..} Client{..} gr@Group{..} = do
                     , " Room members are <" <> expr cnt <> ">."
                     ]
         Nothing -> do
-            cnt <- readTVar groupClientCount
+            cnt <- readTVar groupMemberCount
             return $ do
                 logger $ mconcat
                     [ "Client<" <> expr clientId <> "> doesn't exist in Group<" <> expr groupId <> ">."
