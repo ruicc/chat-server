@@ -54,7 +54,8 @@ data Game = Game
     { gameStatus :: GameStatus
     , deadClients :: [Client]
     }
-data GameStatus = Waiting | BeforePlay | Playing | Result
+data GameStatus = Waiting | BeforePlay | Playing | Result | GroupDeleted
+    deriving (Eq)
 
 newtype GroupCapacity = GroupCapacity Int
     deriving (Show, Read, Eq, Ord, Num)
@@ -201,12 +202,13 @@ addClient :: Server -> Client -> Group -> STM (Maybe (IO ()))
 addClient Server{..} cl@Client{..} gr@Group{..} = do
     clientMap <- readTVar groupMembers
     cnt <- readTVar groupMemberCount
+    gameSt <- getGameStatus gr
 
     if Map.member clientId clientMap
         -- User has already joined.
         then return Nothing
 
-        else if cnt >= groupCapacity
+        else if cnt >= groupCapacity || gameSt == GroupDeleted
             -- Room is full.
             then return Nothing
 
@@ -234,16 +236,18 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
 
 
 removeClient :: Server -> Client -> Group -> STM (IO ())
-removeClient Server{..} cl@Client{..} gr@Group{..} = do
+removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
+    cnt <- readTVar groupMemberCount
     mcl :: Maybe Client
         <- getClient clientId gr
     case mcl of
         Just _ -> do
             modifyTVar' groupMembers (Map.delete clientId)
             modifyTVar' groupMemberCount pred
-            cnt <- readTVar groupMemberCount
 
             sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
+
+            when (cnt == 1) $ deleteGroup srv gr
 
             return $ do
                 clientPut cl $ mconcat
@@ -256,7 +260,6 @@ removeClient Server{..} cl@Client{..} gr@Group{..} = do
                     , " Room members are <" <> expr cnt <> ">."
                     ]
         Nothing -> do
-            cnt <- readTVar groupMemberCount
             return $ do
                 logger $ mconcat
                     [ "Client<" <> expr clientId <> "> doesn't exist in Group<" <> expr groupId <> ">."
@@ -271,6 +274,7 @@ cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
         Waiting -> do
             members :: [(ClientId, Client)]
                 <- Map.toList <$> readTVar groupMembers
+            changeGameStatus gr GroupDeleted
             deleteGroup srv gr
 
             return $ do
@@ -286,3 +290,8 @@ changeGameStatus :: Group -> GameStatus -> STM ()
 changeGameStatus Group{..} gst = do
     game <- readTVar groupGameState
     writeTVar groupGameState game { gameStatus = gst }
+
+getGameStatus :: Group -> STM GameStatus
+getGameStatus Group{..} = do
+    game <- readTVar groupGameState
+    return $ gameStatus game
