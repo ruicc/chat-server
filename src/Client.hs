@@ -9,7 +9,7 @@ import qualified Data.Aeson as A
 main :: IO ()
 main = do
     let
-        threadNum = 1000
+        threadNum = 3300
         loop tv = do
             threadDelay $ 1 * 1000 * 1000
             cnt <- atomically $ readTVar tv
@@ -57,7 +57,7 @@ clientProgram cnt = do
     cl <- (\ (Init cid) -> newClient cid hdl) initMsg
 
 
-    forM_ [1..100] $ \ i -> do
+    forM_ [1..20] $ \ i -> do
         groups <- getMessage
         putSB "/new alice's 2 20"
 

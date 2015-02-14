@@ -25,7 +25,7 @@ runChatServer port = withSocketsDo $ do
 
     forever $ do
         (hdl, hostname, _portnumber) <- accept socket
-        printf "Accepted from %s\n" hostname
+--        printf "Accepted from %s\n" hostname
 
         hSetBuffering hdl LineBuffering
 --        hSetBuffering hdl NoBuffering
