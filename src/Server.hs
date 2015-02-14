@@ -62,14 +62,19 @@ runClientThread srv@Server{..} hdl = do
                                         (Just <$> createGroup srv gid name (GroupCapacity capacity) ts timeout)
                                 case mNewGroup of
                                     Just (gr, onJoin) -> do
+                                        let
+                                            -- Timeout
+                                            canceler :: IO ThreadId
+                                            canceler = forkIO $ do
+                                                threadDelay $ groupTimeout gr * 1000 * 1000
+                                                cancelWaiting srv gr
 
-                                        -- Timeout
-                                        -- TODO: This is on mask. Is it OK??
-                                        void $ forkIO $ do
-                                            threadDelay $ groupTimeout gr * 1000 * 1000
-                                            (groupCancelWaiting gr) srv gr
-
-                                        restore (notifyClient srv gr cl onJoin)
+                                        restore (do
+                                            -- Spawn cancel thread
+                                            tid <- canceler
+                                            -- Register canceler ThreadId
+                                            atomically $ putTMVar (groupCanceler gr) tid
+                                            notifyClient srv gr cl onJoin)
                                                 -- Catch any exception defined by ClientException.
                                                 `catch` (\ (_ :: ClientException) -> return ())
                                                 -- Clean up
@@ -104,13 +109,13 @@ runClientThread srv@Server{..} hdl = do
                 _ -> do
                     loop cl
 
-        -- This signature might be a bit scary, but it just combines 2 processes,
+        -- This signature might be a bit scary, but it just combines 2 actions,
         -- getGr and addClient.
         getGroupAndJoin :: Client -> STM (Maybe Group) -> IO (Maybe (Group, IO ()))
         getGroupAndJoin cl getGr = join $ atomically $ do
 
             -- NOTICE: Getting a group might fail due to removing group.
-            mgr <- getGr
+            mgr :: Maybe Group <- getGr
             case mgr of
                 Just gr -> do
                     -- NOTICE: Joining a group might fail due to room capacity.
@@ -235,9 +240,19 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 
             sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
 
-            when (cnt == 1) $ deleteGroup srv gr
+            mTid <- if (cnt == 1)
+                then do
+                    deleteGroup srv gr
+                    tid <- readTMVar groupCanceler
+                    return $ Just tid
+                else return Nothing
 
             return $ do
+                -- Kill canceller
+                case mTid of
+                    Just tid -> killThread tid
+                    Nothing -> return ()
+
                 clientPut cl $ mconcat
                     [ "/event leave"
                     , "\n"

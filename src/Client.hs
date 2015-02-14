@@ -9,6 +9,24 @@ import qualified Data.Aeson as A
 main :: IO ()
 main = do
     let
+        threadNum = 10
+        loop tv = do
+            threadDelay $ 1 * 1000 * 1000
+            cnt <- atomically $ readTVar tv
+            if cnt >= threadNum
+                then return ()
+                else loop tv
+
+    counter <- newTVarIO 0
+    forM_ [1..threadNum] $ \ i -> do
+        forkIO $ clientProgram counter
+
+    loop counter
+
+
+clientProgram :: TVar Int -> IO ()
+clientProgram cnt = do
+    let
         port :: Int
         port = 3000
 
@@ -62,6 +80,8 @@ main = do
 
     putStrLn $ "Log -- OK"
     hClose hdl
+
+    atomically $ modifyTVar' cnt succ
 
 
 

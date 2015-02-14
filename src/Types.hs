@@ -35,7 +35,7 @@ data Group = Group
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
     , groupHistory :: TVar [Message]
     , groupGameState :: TVar Game
-    , groupCancelWaiting :: Server -> Group -> IO ()
+    , groupCanceler :: TMVar ThreadId
     }
 data Server = Server
     { serverGroups :: TVar (IM.IntMap Group)
@@ -86,6 +86,7 @@ newGroup gid name capacity ts timeout = do
     bch <- newBroadcastTChan
     history <- newTVar []
     gameSt <- newTVar $ Game Waiting []
+    mTid <- newEmptyTMVar
     return $ Group
             gid
             name
@@ -97,7 +98,7 @@ newGroup gid name capacity ts timeout = do
             bch
             history
             gameSt
-            cancelWaiting
+            mTid
 
 getGroup :: Server -> GroupId -> STM (Maybe Group)
 getGroup Server{..} gid = do
