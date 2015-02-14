@@ -25,7 +25,7 @@ cabal-version:
   >=1.10
 
 
-executable chat-server
+executable server
   main-is:
     Main.hs
   other-modules:

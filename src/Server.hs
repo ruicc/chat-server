@@ -130,6 +130,7 @@ runClientThread srv@Server{..} hdl = do
                     -- Getting group failed..
                     return $ return $ Nothing
 
+    hSetBuffering hdl LineBuffering
     cl <- initClient srv hdl
     loop cl
 
@@ -222,10 +223,10 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
                     -- Show history
                     forM_ (reverse hist) $ \msg -> output cl msg
                     tick Log.GroupJoin
-                    logger $ mconcat
-                        [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."
-                        , " Room members are <" <> expr (cnt + 1) <> ">."
-                        ]
+--                    logger $ mconcat
+--                        [ "Client<" <> expr clientId <> "> is added to Group<" <> expr groupId <> ">."
+--                        , " Room members are <" <> expr (cnt + 1) <> ">."
+--                        ]
 
 
 removeClient :: Server -> Client -> Group -> STM (IO ())
@@ -261,10 +262,10 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 --                    , "\n"
 --                    ]
                 tick Log.GroupLeft
-                logger $ mconcat
-                    [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
-                    , " Room members are <" <> (expr $ cnt - 1) <> ">."
-                    ]
+--                logger $ mconcat
+--                    [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
+--                    , " Room members are <" <> (expr $ cnt - 1) <> ">."
+--                    ]
         Nothing -> do
             return $ do
                 logger $ mconcat

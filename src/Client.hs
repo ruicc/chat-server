@@ -9,7 +9,7 @@ import qualified Data.Aeson as A
 main :: IO ()
 main = do
     let
-        threadNum = 3300
+        threadNum = 4000
         loop tv = do
             threadDelay $ 1 * 1000 * 1000
             cnt <- atomically $ readTVar tv
@@ -20,6 +20,7 @@ main = do
     counter <- newTVarIO 0
     forM_ [1..threadNum] $ \ i -> do
         forkIO $ clientProgram counter
+        threadDelay $ 100
 
     loop counter
 
@@ -114,8 +115,6 @@ receiver cl@Client{..} = do
         Just msg -> atomically $ writeTChan clientChan msg
         Nothing -> return ()
     receiver cl
-
---client :: Client
    
 sbToMessage :: ShortByteString -> Maybe Message
 sbToMessage sb = case words sb of
@@ -124,6 +123,6 @@ sbToMessage sb = case words sb of
     ["/event", "join", gid'] -> case readInt gid' of
         Just (gid, _) -> Just $ Join gid
     ["/event", "leave"] -> Just $ Leave
-    ("/groups" : gids') -> Just $ Groups $ map (fst . fromJust . readInt) gids' -- ひどいやつだ
+    ("/groups" : gids') -> Just $ Groups $ map (fst . fromJust . readInt) gids' -- FIXME: fromJust
     _ -> Nothing
 

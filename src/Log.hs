@@ -5,8 +5,8 @@ import           App.Prelude
 
 type LogChan = TChan ShortByteString
 
-spawnLogger :: ErrorChan -> LogChan -> IO ()
-spawnLogger erCh logCh = do
+spawnLogger :: ErrorChan -> StatChan -> LogChan -> IO ()
+spawnLogger erCh stCh logCh = do
     let
         supervisor ch = do
             as :: Async ()
@@ -21,7 +21,9 @@ spawnLogger erCh logCh = do
 
         logger :: LogChan -> IO ()
         logger ch = forever $ do
-            str <- atomically $ readTChan ch
+            str <- atomically $ do
+                writeTChan stCh Logging
+                readTChan ch
 --            putStrLn $ "Log: " <> str
             return ()
 
@@ -40,51 +42,87 @@ data AppEvent
     | GroupJoin
     | GroupLeft
     | SystemError
+    | Logging
 
 data AppStat = AppStat
-    { clientNew :: Int
-    , clientLeft :: Int
-    , groupNew :: Int
-    , groupChat :: Int
-    , groupJoin :: Int
-    , groupLeft :: Int
-    , systemErrors :: Int
+    { clientNew :: TVar Int
+    , clientLeft :: TVar Int
+    , groupNew :: TVar Int
+    , groupChat :: TVar Int
+    , groupJoin :: TVar Int
+    , groupLeft :: TVar Int
+    , systemErrors :: TVar Int
+    , logging :: TVar Int
     }
-    deriving Show
 
-zeroStat :: IO (TVar AppStat)
-zeroStat = newTVarIO (AppStat 0 0 0 0 0 0 0)
+printStat :: AppStat -> IO ()
+printStat AppStat{..} = do
+    (cn, cl, gn, gc, gj, gl, se, l) <- atomically $ do
+        cn <- readTVar $ clientNew
+        cl <- readTVar $ clientLeft
+        gn <- readTVar $ groupNew
+        gc <- readTVar $ groupChat
+        gj <- readTVar $ groupJoin
+        gl <- readTVar $ groupLeft
+        se <- readTVar $ systemErrors
+        l <-  readTVar $ logging
+        return (cn, cl, gn, gc, gj, gl, se, l)
+    putStrLn $ mconcat
+        [ "cl new: " <> expr cn <> ", "
+        , "cl left: " <> expr cl <> ", "
+        , "gr new: " <> expr gn <> ", "
+        , "gr chat: " <> expr gc <> ", "
+        , "gr join: " <> expr gj <> ", "
+        , "gr left: " <> expr gl <> ", "
+        , "sys err: " <> expr se <> ", "
+        , "log: " <> expr l
+        ]
 
-spawnStatAggregator :: ErrorChan -> StatChan -> TVar AppStat -> IO ()
+
+zeroStat :: IO AppStat
+zeroStat = do
+    cn <- newTVarIO 0
+    cl <- newTVarIO 0
+    gn <- newTVarIO 0
+    gc <- newTVarIO 0
+    gj <- newTVarIO 0
+    gl <- newTVarIO 0
+    se <- newTVarIO 0
+    l <- newTVarIO 0
+    return $ AppStat cn cl gn gc gj gl se l
+
+
+spawnStatAggregator :: ErrorChan -> StatChan -> AppStat -> IO ()
 spawnStatAggregator erCh stCh stat = do
     let
 
-        supervisor ch tsum = do
+        supervisor ch astat = do
             as :: Async ()
-                <- async (aggregator ch tsum)
+                <- async (aggregator ch astat)
             res :: Either SomeException ()
                 <- try $ wait as
 
             case res of
                 Left e -> do
                     atomically $ writeTChan erCh e
-                    supervisor ch tsum
+                    supervisor ch astat
                 Right _ -> error "ここには来ない"
 
-        aggregator :: StatChan -> TVar AppStat -> IO ()
+        aggregator :: StatChan -> AppStat -> IO ()
         aggregator ch tsum = do
-            st
-                <- atomically $ readTChan ch
-            atomically $ aggregate tsum st
+            atomically $ do
+                st <- readTChan ch
+                aggregate tsum st
             aggregator ch tsum
 
-        aggregate tsum ClientNew  = modifyTVar' tsum $ \s -> s { clientNew = succ $ clientNew s }
-        aggregate tsum ClientLeft = modifyTVar' tsum $ \s -> s { clientLeft = succ $ clientLeft s }
-        aggregate tsum GroupNew  = modifyTVar' tsum $ \s -> s { groupNew = succ $ groupNew s }
-        aggregate tsum GroupChat  = modifyTVar' tsum $ \s -> s { groupChat = succ $ groupChat s }
-        aggregate tsum GroupJoin  = modifyTVar' tsum $ \s -> s { groupJoin = succ $ groupJoin s }
-        aggregate tsum GroupLeft  = modifyTVar' tsum $ \s -> s { groupLeft = succ $ groupLeft s }
-        aggregate tsum SystemError = modifyTVar' tsum $ \s -> s { systemErrors = succ $ systemErrors s }
+        aggregate astat ClientNew   = modifyTVar' (clientNew    astat) succ
+        aggregate astat ClientLeft  = modifyTVar' (clientLeft   astat) succ
+        aggregate astat GroupNew    = modifyTVar' (groupNew     astat) succ
+        aggregate astat GroupChat   = modifyTVar' (groupChat    astat) succ
+        aggregate astat GroupJoin   = modifyTVar' (groupJoin    astat) succ
+        aggregate astat GroupLeft   = modifyTVar' (groupLeft    astat) succ
+        aggregate astat SystemError = modifyTVar' (systemErrors astat) succ
+        aggregate astat Logging     = modifyTVar' (logging      astat) succ
 
     _tid <- forkIO $ supervisor stCh stat
     return ()
@@ -93,7 +131,7 @@ spawnStatAggregator erCh stCh stat = do
 
 type ErrorChan = TChan SomeException
 
-spawnErrorCollector :: ErrorChan -> StatChan -> TVar AppStat -> IO ()
+spawnErrorCollector :: ErrorChan -> StatChan -> AppStat -> IO ()
 spawnErrorCollector erCh stCh stat = do
     let
         supervisor ch tsum = do
@@ -122,12 +160,11 @@ spawnErrorCollector erCh stCh stat = do
 spawnCollectorThreads :: IO (ErrorChan, StatChan, LogChan)
 spawnCollectorThreads = do
     let
-        outputRepeatedly :: TVar AppStat -> IO ()
-        outputRepeatedly tsum = do
-            s <- atomically $ readTVar tsum
-            print s
+        outputRepeatedly :: AppStat -> IO ()
+        outputRepeatedly stat = do
+            printStat stat
             threadDelay $ 5 * 1000 * 1000
-            outputRepeatedly tsum
+            outputRepeatedly stat
 
     stat <- zeroStat
 
@@ -140,8 +177,15 @@ spawnCollectorThreads = do
 
     spawnErrorCollector erCh stCh stat
     spawnStatAggregator erCh stCh stat
-    spawnLogger erCh logCh
+    spawnLogger erCh stCh logCh
 
+    forkIO $ dummyLogSender logCh
 
     _tid2 <- forkIO $ outputRepeatedly stat
     return (erCh, stCh, logCh)
+
+dummyLogSender logCh = do
+    threadDelay $ 5 * 1000 * 1000
+    atomically $ writeTChan logCh "Dummy"
+    dummyLogSender logCh
+
