@@ -144,7 +144,7 @@ clientGet :: Server -> Client -> IO ShortByteString
 clientGet Server{..} Client{..} = do
     str <- rstrip <$> hGetLine clientHandle
     hFlush clientHandle
-    logger $ "(raw) " <> str
+--    logger $ "(raw) " <> str
     return str
 
 clientPut :: Client -> ShortByteString -> IO ()

@@ -9,7 +9,7 @@ import qualified Data.Aeson as A
 main :: IO ()
 main = do
     let
-        threadNum = 10
+        threadNum = 1000
         loop tv = do
             threadDelay $ 1 * 1000 * 1000
             cnt <- atomically $ readTVar tv
@@ -43,14 +43,14 @@ clientProgram cnt = do
         getMessage = do
             sb <- rstrip <$> hGetLine hdl
             hFlush hdl
-            putStrLn $ "Rcv :: " <> sb -- logging
+--            putStrLn $ "Rcv :: " <> sb -- logging
             return $ fromJust $ sbToMessage sb
 
         putSB :: ShortByteString -> IO ()
         putSB sb = do
             hPutStrLn hdl sb
             hFlush hdl
-            putStrLn $ "Snd >> " <> sb -- logging
+--            putStrLn $ "Snd >> " <> sb -- logging
 
 
     initMsg <- getMessage
@@ -76,9 +76,8 @@ clientProgram cnt = do
 
     putSB "/quit"
 
-    putStrLn $ "Log -- " <> (expr $ clientId cl)
-
-    putStrLn $ "Log -- OK"
+--    putStrLn $ "Log -- " <> (expr $ clientId cl)
+--    putStrLn $ "Log -- OK"
     hClose hdl
 
     atomically $ modifyTVar' cnt succ

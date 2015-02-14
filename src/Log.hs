@@ -22,7 +22,8 @@ spawnLogger erCh logCh = do
         logger :: LogChan -> IO ()
         logger ch = forever $ do
             str <- atomically $ readTChan ch
-            putStrLn $ "Log: " <> str
+--            putStrLn $ "Log: " <> str
+            return ()
 
     _tid <- forkIO $ supervisor logCh
     return ()
