@@ -110,9 +110,8 @@ spawnStatAggregator erCh stCh stat = do
 
         aggregator :: StatChan -> AppStat -> IO ()
         aggregator ch tsum = do
-            atomically $ do
-                st <- readTChan ch
-                aggregate tsum st
+            st <- atomically $ readTChan ch
+            atomically $ aggregate tsum st
             aggregator ch tsum
 
         aggregate astat ClientNew   = modifyTVar' (clientNew    astat) succ
@@ -147,9 +146,8 @@ spawnErrorCollector erCh stCh stat = do
 
         collector :: ErrorChan -> IO ()
         collector ch = forever $ do
-            err <- atomically $ do
-                writeTChan stCh SystemError
-                readTChan ch
+            atomically $ writeTChan stCh SystemError
+            err <- atomically $ readTChan ch
             putStrLn $ "Err: " <> expr err
 
     _tid <- forkIO $ supervisor erCh stat

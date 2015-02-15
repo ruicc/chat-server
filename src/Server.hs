@@ -21,7 +21,7 @@ runClientThread srv@Server{..} hdl = do
             grs :: [(GroupId, Group)]
                 <- atomically $ getAllGroups srv
 
-            clientPut cl $ "/groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
+            clientPut cl $ "!groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
 --            clientPut cl $ mconcat
 --                [ "{\"rooms\":["
 --                , mconcat $ intersperse "," $ map (expr . fst) grs
@@ -139,7 +139,7 @@ initClient :: Server -> Handle -> IO Client
 initClient srv hdl = do
     cl <- newClient hdl
     tick srv $ Log.ClientNew
-    clientPut cl $ "/init " <> (expr $ clientId cl) <> "\n"
+    clientPut cl $ "!init " <> (expr $ clientId cl) <> "\n"
 --    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
     return cl
 
@@ -148,7 +148,7 @@ notifyClient :: Server -> Group -> Client -> IO () -> IO ()
 notifyClient srv@Server{..} gr@Group{..} cl@Client{..} onJoin = do
 
     -- Notice group to User
-    clientPut cl $ "/event join " <> expr groupId <> "\n"
+    clientPut cl $ "!event join " <> expr groupId <> "\n"
 --    clientPut cl $ mconcat
 --        [ "{\"event\":\"join-room\"}"
 --        , "\n"
@@ -255,7 +255,7 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
                     Nothing -> return ()
 
                 clientPut cl $ mconcat
-                    [ "/event leave"
+                    [ "!event leave"
                     , "\n"
                     ]
 --                    [ "{\"event\":\"leave-room\"}"

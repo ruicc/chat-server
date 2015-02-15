@@ -1,6 +1,9 @@
 module Main where
 
 import App.Prelude
+import Client.Types
+import Client.Actions
+import Client.Utils
 import Network
 import Data.Maybe
 import qualified Data.Aeson as A
@@ -9,7 +12,7 @@ import qualified Data.Aeson as A
 main :: IO ()
 main = do
     let
-        threadNum = 4000
+        threadNum = 2000
         loop tv = do
             threadDelay $ 1 * 1000 * 1000
             cnt <- atomically $ readTVar tv
@@ -39,43 +42,18 @@ clientProgram cnt = do
 
     threadDelay $ 100 * 1000
 
-    let
-        getMessage :: IO Message
-        getMessage = do
-            sb <- rstrip <$> hGetLine hdl
-            hFlush hdl
---            putStrLn $ "Rcv :: " <> sb -- logging
-            return $ fromJust $ sbToMessage sb
-
-        putSB :: ShortByteString -> IO ()
-        putSB sb = do
-            hPutStrLn hdl sb
-            hFlush hdl
---            putStrLn $ "Snd >> " <> sb -- logging
-
-
-    initMsg <- getMessage
-    cl <- (\ (Init cid) -> newClient cid hdl) initMsg
-
+    cl <- initialize hdl
 
     forM_ [1..20] $ \ i -> do
-        groups <- getMessage
-        putSB "/new alice's 2 20"
+        cl' <- createNewGroup cl "alice's" 2 20
 
-        join <- getMessage
-        cl <- (\(Join gid) -> return cl { groupId = Just gid }) join
+        chat cl' "Hello!"
 
-        putSB "Hello!"
-        res <- getMessage
-
-        putSB "/leave"
-        leave <- getMessage
+        cl <- leaveGroup cl'
 
         return ()
 
-    _gs <- getMessage
-
-    putSB "/quit"
+    quit cl
 
 --    putStrLn $ "Log -- " <> (expr $ clientId cl)
 --    putStrLn $ "Log -- OK"
@@ -86,25 +64,6 @@ clientProgram cnt = do
 
 
 
-type ClientId = Int
-type GroupId = Int
-
-data Client = Client
-    { clientId :: ClientId
-    , clientHandle :: Handle
-    , clientChan :: TChan Message
-    , groupId :: Maybe GroupId
-    }
-data Message -- messages from server
-    = Init ClientId
-    | Groups [GroupId]
-    | Join GroupId
-    | Leave
-
-newClient :: ClientId -> Handle -> IO Client
-newClient cid hdl = do
-    ch <- newTChanIO
-    return $ Client cid hdl ch Nothing
 
 receiver :: Client -> IO ()
 receiver cl@Client{..} = do
@@ -116,13 +75,3 @@ receiver cl@Client{..} = do
         Nothing -> return ()
     receiver cl
    
-sbToMessage :: ShortByteString -> Maybe Message
-sbToMessage sb = case words sb of
-    ["/init", cid'] -> case readInt cid' of
-        Just (cid, _) -> Just $ Init cid
-    ["/event", "join", gid'] -> case readInt gid' of
-        Just (gid, _) -> Just $ Join gid
-    ["/event", "leave"] -> Just $ Leave
-    ("/groups" : gids') -> Just $ Groups $ map (fst . fromJust . readInt) gids' -- FIXME: fromJust
-    _ -> Nothing
-
