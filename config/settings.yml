@@ -1,0 +1,11 @@
+server:
+    max_connections: 4000
+    host: localhost
+    port: 3000
+
+ekg:
+    host: 192.168.33.10
+    port: 3001
+
+client:
+    spawn_threads: 2000

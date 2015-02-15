@@ -1,18 +1,22 @@
 module Main where
 
 import App.Prelude
+import App.Config
 import Client.Types
 import Client.Actions
 import Client.Utils
 import Network
-import Data.Maybe
-import qualified Data.Aeson as A
 
 
 main :: IO ()
 main = do
+
+    cnf <- getConfig "config/settings.yml"
+
     let
-        threadNum = 2000
+        clientCnf = clientConfig cnf
+
+        threadNum = clientSpawnThreads clientCnf
         loop tv = do
             threadDelay $ 1 * 1000 * 1000
             cnt <- atomically $ readTVar tv
@@ -22,29 +26,34 @@ main = do
 
     counter <- newTVarIO 0
     forM_ [1..threadNum] $ \ i -> do
-        forkIO $ clientProgram counter
+        void $ forkIO $ clientProgram cnf counter
         threadDelay $ 100
 
     loop counter
 
 
-clientProgram :: TVar Int -> IO ()
-clientProgram cnt = do
+clientProgram :: Config -> TVar Int -> IO ()
+clientProgram cnf cnt = do
     let
+        serverCnf = serverConfig cnf
+
         port :: Int
-        port = 3000
+        port = serverPort serverCnf
+
+        host :: String
+        host = serverHost serverCnf
 
         portId :: PortID
         portId = PortNumber $ fromIntegral port
 
-    hdl <- connectTo "localhost" portId
+    hdl <- connectTo host portId
     hSetBuffering hdl LineBuffering
 
     threadDelay $ 100 * 1000
 
     cl <- initialize hdl
 
-    forM_ [1..20] $ \ i -> do
+    forM_ [1..20 :: Int] $ \ i -> do
         cl' <- createNewGroup cl "alice's" 2 20
 
         chat cl' "Hello!"

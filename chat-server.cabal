@@ -32,6 +32,7 @@ executable server
       Chat, Log, Types, Server, Utils, Exception
     , App.Prelude
     , App.Time
+    , App.Config
   default-extensions:
       NoImplicitPrelude
     , GeneralizedNewtypeDeriving
@@ -49,6 +50,10 @@ executable server
     , text
     , bytestring
     , unix-time
+    , yaml
+    , aeson
+    , unordered-containers
+    , scientific
 
     , network >= 2.6
     , ekg
@@ -85,6 +90,9 @@ executable client
     , text
     , bytestring
     , unix-time
+    , yaml
+    , unordered-containers
+    , scientific
 
     , network >= 2.6
   hs-source-dirs:

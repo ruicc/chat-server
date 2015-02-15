@@ -1,16 +1,24 @@
 module Main where
 
 import           App.Prelude
+import           App.Config
 import           Chat (runChatServer)
 import           System.Remote.Monitoring
 
-port :: Int
-port = 3000
-
 main :: IO ()
 main = do
-    -- ekg: access at http://localhost:3001 with browser or curl.
-    -- curl -H "Accept: application/json" http://localhost:3001/
-    _ <- forkServer "192.168.33.10" 3001
 
-    runChatServer port
+    cnf :: Config
+        <- getConfig "config/settings.yml"
+
+    let
+        ekgCnf = ekgConfig cnf
+        serverCnf = serverConfig cnf
+
+    -- Ekg: access at http://localhost:3001 with browser or curl.
+    -- curl -H "Accept: application/json" http://localhost:3001/
+    _ <- forkServer
+        (ekgHost ekgCnf)
+        (ekgPort ekgCnf)
+
+    runChatServer (serverPort serverCnf)
