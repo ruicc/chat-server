@@ -15,6 +15,8 @@ type ClientId = Int
 type ClientName = ShortByteString
 type GroupId = Int
 type GroupName = ShortByteString
+type Timestamp = Int
+type GroupCapacity = Int
 
 data Client = Client
     { clientId :: ClientId
@@ -29,7 +31,7 @@ data Group = Group
     , groupCapacity :: Int
     , groupCreatedAt :: Int -- ^ UnixTime
     , groupTimeout :: Int -- ^ Seconds
-
+    -- Mutable values
     , groupMembers :: TVar (IM.IntMap Client)
     , groupMemberCount :: TVar Int
     , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
@@ -56,10 +58,6 @@ data Game = Game
 data GameStatus = Waiting | BeforePlay | Playing | Result | GroupDeleted
     deriving (Eq)
 
-newtype GroupCapacity = GroupCapacity Int
-    deriving (Show, Read, Eq, Ord, Num)
-
-type Timestamp = Int
 
 ------------------------------------------------------------------------------------------
 -- | Server
@@ -79,7 +77,7 @@ newServer logCh statCh erCh = do
 ------------------------------------------------------------------------------------------
 -- | Group
 
-newGroup :: GroupId -> ShortByteString -> Int -> Timestamp -> Int -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
+newGroup :: GroupId -> GroupName -> GroupCapacity -> Timestamp -> Int -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
 newGroup gid name capacity ts timeout = do
     clientMap <- newTVar IM.empty
     cnt <- newTVar 0
@@ -88,17 +86,18 @@ newGroup gid name capacity ts timeout = do
     gameSt <- newTVar $ Game Waiting []
     mTid <- newEmptyTMVar
     return $ Group
-            gid
-            name
-            capacity
-            ts
-            timeout
-            clientMap
-            cnt
-            bch
-            history
-            gameSt
-            mTid
+       { groupId            = gid
+       , groupName          = name
+       , groupCapacity      = capacity
+       , groupCreatedAt     = ts
+       , groupTimeout       = timeout
+       , groupMembers       = clientMap
+       , groupMemberCount   = cnt
+       , groupBroadcastChan = bch
+       , groupHistory       = history
+       , groupGameState     = gameSt
+       , groupCanceler      = mTid
+       }
 
 getGroup :: Server -> GroupId -> STM (Maybe Group)
 getGroup Server{..} gid = do
@@ -111,7 +110,7 @@ getAllGroups Server{..} = do
     return $ IM.toList groupMap
 
 createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> Int -> Int -> STM Group
-createGroup Server{..} gid name (GroupCapacity capacity) ts timeout = do
+createGroup Server{..} gid name capacity ts timeout = do
     gr <- newGroup gid name capacity ts timeout
     modifyTVar' serverGroups $ IM.insert (groupId gr) gr
     return gr
@@ -126,7 +125,7 @@ deleteGroup Server{..} Group{..} = do
 
 newClient :: Handle -> IO Client -- STM???
                                  --    -> No. Client is not shared value.
-                                 --    -> Client is shared with server and client but STM isn't required.
+                                 --    -> Client is shared within Server and Group, but STM isn't required.
 newClient hdl = do
     cid :: Int
         <- Uniq.hashUnique <$> Uniq.newUnique

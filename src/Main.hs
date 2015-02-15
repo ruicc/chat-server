@@ -11,6 +11,6 @@ main :: IO ()
 main = do
     -- ekg: access at http://localhost:3001 with browser or curl.
     -- curl -H "Accept: application/json" http://localhost:3001/
---    _ <- forkServer "localhost" 3001
+    _ <- forkServer "192.168.33.10" 3001
 
     runChatServer port

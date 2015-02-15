@@ -59,7 +59,7 @@ runClientThread srv@Server{..} hdl = do
                                 mNewGroup :: Maybe (Group, IO ())
                                     <- getGroupAndJoin
                                         cl
-                                        (Just <$> createGroup srv gid name (GroupCapacity capacity) ts timeout)
+                                        (Just <$> createGroup srv gid name capacity ts timeout)
                                 case mNewGroup of
                                     Just (gr, onJoin) -> do
                                         let
