@@ -56,10 +56,10 @@ data Message
     | Command ShortByteString
     deriving Show
 data Game = Game
-    { gameStatus :: GameStatus
+    { gameState :: GameState
     , deadClients :: [Client]
     }
-data GameStatus = Waiting | BeforePlay | Playing | Result | GroupDeleted
+data GameState = Waiting | BeforePlay | Playing | Result | GroupDeleted
     deriving (Eq)
 
 
@@ -127,7 +127,7 @@ deleteGroup :: Server -> Group -> STM (IO ())
 deleteGroup srv@Server{..} gr@Group{..} = do
     members :: [(ClientId, Client)]
         <- IM.toList <$> readTVar groupMembers
-    changeGameStatus gr GroupDeleted
+    changeGameState gr GroupDeleted
     modifyTVar' serverGroups $ IM.delete groupId
 
     tid <- readTMVar groupCanceler
@@ -219,8 +219,8 @@ getClient cid Group{..} = do
 
 cancelWaiting :: Server -> Group -> IO ()
 cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
-    -- Check GameStatus
-    gameSt <- gameStatus <$> readTVar groupGameState
+    -- Check GameState
+    gameSt <- gameState <$> readTVar groupGameState
     case gameSt of
         Waiting -> do
             onRemove <- deleteGroup srv gr
@@ -232,12 +232,12 @@ cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
             logger "Canceler fired, but do nothing"
             return ()
 
-changeGameStatus :: Group -> GameStatus -> STM ()
-changeGameStatus Group{..} gst = do
+changeGameState :: Group -> GameState -> STM ()
+changeGameState Group{..} gst = do
     game <- readTVar groupGameState
-    writeTVar groupGameState game { gameStatus = gst }
+    writeTVar groupGameState game { gameState = gst }
 
-getGameStatus :: Group -> STM GameStatus
-getGameStatus Group{..} = do
+getGameState :: Group -> STM GameState
+getGameState Group{..} = do
     game <- readTVar groupGameState
-    return $ gameStatus game
+    return $ gameState game

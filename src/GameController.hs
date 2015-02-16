@@ -14,13 +14,13 @@ spawnControlThread srv@Server{..} gr@Group{..} = do
             atomically $ do
                 sendBroadcast gr (Command "!begin")
                 putTMVar groupGameController tid
-                changeGameStatus gr Playing
+                changeGameState gr Playing
             logger $ "Group<" <> expr groupId <> "> Game begins!"
 
             restore (playGame srv gr) `catch` \ (e :: SomeException) -> do
                 -- Cleanup
                 onRemove <- atomically $ do
-                    changeGameStatus gr GroupDeleted
+                    changeGameState gr GroupDeleted
                     deleteGroup srv gr
                 onRemove
                 errorCollector e
@@ -32,7 +32,7 @@ playGame srv@Server{..} gr@Group{..} = do
     threadDelay $ groupPlayTime * 1000 * 1000
     onRemove <- atomically $ do
         sendBroadcast gr (Command "!finish")
-        changeGameStatus gr GroupDeleted
+        changeGameState gr GroupDeleted
         deleteGroup srv gr
     onRemove
     logger $ "Group<" <> expr groupId <> "> Game finished!"

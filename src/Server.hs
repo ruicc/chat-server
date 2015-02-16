@@ -190,7 +190,7 @@ addClient :: Server -> Client -> Group -> STM (Maybe (IO ()))
 addClient srv@Server{..} cl@Client{..} gr@Group{..} = do
     clientMap <- readTVar groupMembers
     cnt <- readTVar groupMemberCount
-    gameSt <- getGameStatus gr
+    gameSt <- getGameState gr
 
     if IM.member clientId clientMap
         -- User has already joined.
@@ -205,7 +205,7 @@ addClient srv@Server{..} cl@Client{..} gr@Group{..} = do
                 modifyTVar' groupMemberCount succ
 
                 -- To next state
-                when (cnt + 1 == groupCapacity) $ changeGameStatus gr BeforePlay
+                when (cnt + 1 == groupCapacity) $ changeGameState gr BeforePlay
 
                 -- TODO: Use it later
                 hist :: [Message]
