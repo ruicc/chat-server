@@ -133,9 +133,12 @@ deleteGroup srv@Server{..} gr@Group{..} = do
     tid <- readTMVar groupCanceler
 
     return $ do
-        killThread tid
         forM_ members $ \ (cid, Client{..}) -> do
             throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
+
+        -- Killing the canceler thread must be done at last
+        -- so that the canceler thread can call deleteGroup.
+        killThread tid
 
 ------------------------------------------------------------------------------------------
 -- | Client

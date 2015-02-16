@@ -23,7 +23,7 @@ spawnControlThread srv@Server{..} gr@Group{..} = do
                     changeGameStatus gr GroupDeleted
                     deleteGroup srv gr
                 onRemove
-                tick Log.SystemError
+                errorCollector e
                 logger $ "An Error occured on playing!"
 
 playGame :: Server -> Group -> IO ()
