@@ -1,6 +1,7 @@
 module Log where
 
 import           App.Prelude
+import qualified Data.ByteString as B
 
 
 type LogChan = TChan ShortByteString
@@ -24,7 +25,7 @@ spawnLogger erCh stCh logCh = do
             str <- atomically $ do
                 writeTChan stCh Logging
                 readTChan ch
---            putStrLn $ "Log: " <> str
+            when (not $ null str) $ putStrLn $ "Log: " <> str
             return ()
 
     _tid <- forkIO $ supervisor logCh
@@ -146,7 +147,6 @@ spawnErrorCollector erCh stCh stat = do
 
         collector :: ErrorChan -> IO ()
         collector ch = forever $ do
-            atomically $ writeTChan stCh SystemError
             err <- atomically $ readTChan ch
             putStrLn $ "Err: " <> expr err
 
@@ -184,6 +184,6 @@ spawnCollectorThreads = do
 
 dummyLogSender logCh = do
     threadDelay $ 5 * 1000 * 1000
-    atomically $ writeTChan logCh "Dummy"
+    atomically $ writeTChan logCh ""
     dummyLogSender logCh
 

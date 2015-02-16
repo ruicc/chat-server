@@ -17,6 +17,8 @@ type GroupId = Int
 type GroupName = ShortByteString
 type Timestamp = Int
 type GroupCapacity = Int
+type PlayTime = Int
+type Timeout = Int
 
 data Client = Client
     { clientId :: ClientId
@@ -31,6 +33,7 @@ data Group = Group
     , groupCapacity :: Int
     , groupCreatedAt :: Int -- ^ UnixTime
     , groupTimeout :: Int -- ^ Seconds
+    , groupPlayTime :: Int -- ^ Seconds
     -- Mutable values
     , groupMembers :: TVar (IM.IntMap Client)
     , groupMemberCount :: TVar Int
@@ -38,6 +41,7 @@ data Group = Group
     , groupHistory :: TVar [Message]
     , groupGameState :: TVar Game
     , groupCanceler :: TMVar ThreadId
+    , groupGameController :: TMVar ThreadId
     }
 data Server = Server
     { serverGroups :: TVar (IM.IntMap Group)
@@ -77,26 +81,29 @@ newServer logCh statCh erCh = do
 ------------------------------------------------------------------------------------------
 -- | Group
 
-newGroup :: GroupId -> GroupName -> GroupCapacity -> Timestamp -> Int -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
-newGroup gid name capacity ts timeout = do
+newGroup :: GroupId -> GroupName -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
+newGroup gid name capacity playTime ts timeout = do
     clientMap <- newTVar IM.empty
     cnt <- newTVar 0
     bch <- newBroadcastTChan
     history <- newTVar []
     gameSt <- newTVar $ Game Waiting []
     mTid <- newEmptyTMVar
+    mTid2 <- newEmptyTMVar
     return $ Group
-       { groupId            = gid
-       , groupName          = name
-       , groupCapacity      = capacity
-       , groupCreatedAt     = ts
-       , groupTimeout       = timeout
-       , groupMembers       = clientMap
-       , groupMemberCount   = cnt
-       , groupBroadcastChan = bch
-       , groupHistory       = history
-       , groupGameState     = gameSt
-       , groupCanceler      = mTid
+       { groupId             = gid
+       , groupName           = name
+       , groupCapacity       = capacity
+       , groupCreatedAt      = ts
+       , groupTimeout        = timeout
+       , groupPlayTime       = playTime
+       , groupMembers        = clientMap
+       , groupMemberCount    = cnt
+       , groupBroadcastChan  = bch
+       , groupHistory        = history
+       , groupGameState      = gameSt
+       , groupCanceler       = mTid
+       , groupGameController = mTid2
        }
 
 getGroup :: Server -> GroupId -> STM (Maybe Group)
@@ -109,16 +116,26 @@ getAllGroups Server{..} = do
     groupMap <- readTVar serverGroups
     return $ IM.toList groupMap
 
-createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> Int -> Int -> STM Group
-createGroup Server{..} gid name capacity ts timeout = do
-    gr <- newGroup gid name capacity ts timeout
+createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> STM Group
+createGroup Server{..} gid name capacity playTime ts timeout = do
+    gr <- newGroup gid name capacity playTime ts timeout
     modifyTVar' serverGroups $ IM.insert (groupId gr) gr
     return gr
 
-deleteGroup :: Server -> Group -> STM ()
-deleteGroup Server{..} Group{..} = do
+-- FIXME: basic operation and high-level operation should be separated..
+deleteGroup :: Server -> Group -> STM (IO ())
+deleteGroup srv@Server{..} gr@Group{..} = do
+    members :: [(ClientId, Client)]
+        <- IM.toList <$> readTVar groupMembers
+    changeGameStatus gr GroupDeleted
     modifyTVar' serverGroups $ IM.delete groupId
 
+    tid <- readTMVar groupCanceler
+
+    return $ do
+        killThread tid
+        forM_ members $ \ (cid, Client{..}) -> do
+            throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
 
 ------------------------------------------------------------------------------------------
 -- | Client
@@ -203,18 +220,13 @@ cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
     gameSt <- gameStatus <$> readTVar groupGameState
     case gameSt of
         Waiting -> do
-            members :: [(ClientId, Client)]
-                <- IM.toList <$> readTVar groupMembers
-            changeGameStatus gr GroupDeleted
-            deleteGroup srv gr
-
+            onRemove <- deleteGroup srv gr
             return $ do
-                logger $ "CancelWaiting fired. Group<" <> expr groupId <> "> is removed"
-                forM_ members $ \ (cid, Client{..}) -> do
-                    logger $ "CancelWaiting: " <> expr cid
-                    throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
-        _ -> return $ do
-            logger "CancelWaiting fired, but do nothing"
+                onRemove
+                logger $ "Canceler removed Group<" <> expr groupId <> ">."
+
+        _       -> return $ do
+            logger "Canceler fired, but do nothing"
             return ()
 
 changeGameStatus :: Group -> GameStatus -> STM ()

@@ -9,6 +9,7 @@ module App.Prelude
     , module Data.Monoid
     -- * ShortByteString
     , ShortByteString, toShort, fromShort
+    , SB.null
     -- * Show
     , expr
     -- * System.IO
@@ -24,7 +25,7 @@ module App.Prelude
     )
     where
 
-import           Prelude as P hiding (log, lookup, putStrLn, putStr, words)
+import           Prelude as P hiding (log, lookup, putStrLn, putStr, words, null)
 import           Control.Applicative
 import           Control.Monad
 import           Control.Concurrent
@@ -37,6 +38,7 @@ import           Data.Char (isSpace)
 --import qualified Data.ByteString as B hiding (putStrLn, putStr)
 import qualified Data.ByteString.Char8 as B.Char
 import           Data.ByteString.Short (ShortByteString, toShort, fromShort)
+import qualified Data.ByteString.Short as SB
 import qualified Data.Text as T
 import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
 
@@ -68,6 +70,9 @@ rstrip = toShort . B.Char.reverse . B.Char.dropWhile isSpace . B.Char.reverse . 
 
 readInt :: ShortByteString -> Maybe (Int, ShortByteString)
 readInt sb = fmap (\ (i,b) -> (i, toShort b)) $ B.Char.readInt $ fromShort sb
+
+null :: ShortByteString -> Bool
+null = B.Char.null . fromShort
 
 ------------------------------------------------------------------------------------------
 -- | Text and ShortByteString

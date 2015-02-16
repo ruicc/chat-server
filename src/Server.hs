@@ -10,6 +10,7 @@ import qualified Data.IntMap as IM
 import qualified Log as Log
 import           Types
 import           Exception
+import           GameController (spawnControlThread)
 
 
 
@@ -50,6 +51,9 @@ runClientThread srv@Server{..} hdl = do
                 ["/quit"] -> throwIO QuitGame
 
                 ["/new", name, capacity', timeout'] -> do
+                    let
+                        playTime = 3 -- TODO: User should be able to specify it.
+
                     case (readInt capacity', readInt timeout') of
                         (Just (capacity, _), Just (timeout, _)) -> do
                             gid <- Uniq.hashUnique <$> Uniq.newUnique
@@ -59,22 +63,11 @@ runClientThread srv@Server{..} hdl = do
                                 mNewGroup :: Maybe (Group, IO ())
                                     <- getGroupAndJoin
                                         cl
-                                        (Just <$> createGroup srv gid name capacity ts timeout)
+                                        (Just <$> createGroup srv gid name capacity playTime ts timeout)
                                 case mNewGroup of
                                     Just (gr, onJoin) -> do
-                                        let
-                                            -- Timeout
-                                            canceler :: IO ThreadId
-                                            canceler = forkIO $ do
-                                                threadDelay $ groupTimeout gr * 1000 * 1000
-                                                cancelWaiting srv gr
-
-                                        restore (do
-                                            -- Spawn cancel thread
-                                            tid <- canceler
-                                            -- Register canceler ThreadId
-                                            atomically $ putTMVar (groupCanceler gr) tid
-                                            notifyClient srv gr cl onJoin)
+                                        -- FIXME: spawnTimeoutCanceler may throw exception..
+                                        restore (spawnTimeoutCanceler srv gr >> notifyClient srv gr cl onJoin)
                                                 -- Catch any exception defined by ClientException.
                                                 `catch` (\ (_ :: ClientException) -> return ())
                                                 -- Clean up
@@ -107,6 +100,7 @@ runClientThread srv@Server{..} hdl = do
                         Nothing -> do
                             loop cl
                 _ -> do
+                    clientPut cl $ "!status \"group-select\"\n"
                     loop cl
 
         -- This signature might be a bit scary, but it just combines 2 actions,
@@ -193,7 +187,7 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
 
 -- | Add client to group. Returned action is to show latest history.
 addClient :: Server -> Client -> Group -> STM (Maybe (IO ()))
-addClient Server{..} cl@Client{..} gr@Group{..} = do
+addClient srv@Server{..} cl@Client{..} gr@Group{..} = do
     clientMap <- readTVar groupMembers
     cnt <- readTVar groupMemberCount
     gameSt <- getGameStatus gr
@@ -220,6 +214,14 @@ addClient Server{..} cl@Client{..} gr@Group{..} = do
                 sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is joined.")
 
                 return $ Just $ do -- IO
+
+                    when (cnt + 1 == groupCapacity) $ do
+                        -- Members are gathered.
+                        -- TODO: Is Transaction required to get canceler's ThreadId?
+                        killThread =<< (atomically $ readTMVar groupCanceler)
+                        -- TODO: Exception Handling, supervisored threading.
+                        spawnControlThread srv gr
+
                     -- Show history
                     forM_ (reverse hist) $ \msg -> output cl msg
                     tick Log.GroupJoin
@@ -241,17 +243,17 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 
             sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
 
-            mTid <- if (cnt == 1)
+            mOnRemove <- if (cnt == 1)
                 then do
-                    deleteGroup srv gr
-                    tid <- readTMVar groupCanceler
-                    return $ Just tid
+                    onRemove <- deleteGroup srv gr
+                    return $ Just $ do
+                        onRemove
                 else return Nothing
 
             return $ do
-                -- Kill canceller
-                case mTid of
-                    Just tid -> killThread tid
+                case mOnRemove of
+                    -- Kill timeout canceller
+                    Just onRemove -> onRemove
                     Nothing -> return ()
 
                 clientPut cl $ mconcat
@@ -304,3 +306,11 @@ handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do
             return True
 
         _ -> error "Not impl yet"
+
+
+spawnTimeoutCanceler :: Server -> Group -> IO ()
+spawnTimeoutCanceler srv gr = void $ forkIO $ do
+    tid <- myThreadId
+    atomically $ putTMVar (groupCanceler gr) tid
+    threadDelay $ groupTimeout gr * 1000 * 1000
+    cancelWaiting srv gr
