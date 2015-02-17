@@ -1,13 +1,16 @@
 module Main where
 
 import Control.Applicative
-import Control.Monad.Cont as Conc
+import Control.Monad.Cont
 import Control.Monad.State
+import Control.Concurrent as Conc
 import Control.Exception
 import System.IO
 import Data.Monoid
 
+--type Concurrent r a = ContT r (StateT (a -> IO r) IO) a
 type Concurrent a = ContT () (StateT (a -> IO ()) IO) a
+--type Concurrent a = ContT () IO a
 
 runConcurrent :: (a -> IO ()) -> Concurrent a -> IO ()
 runConcurrent cont action = flip evalStateT cont $ runContT action (liftIO . cont)
@@ -25,16 +28,31 @@ main :: IO ()
 main = runConcurrent putStrLn $ do
     path <- liftIO $ getLine
     hdl <- liftIO $ openFile path ReadMode
-    exitStr <- callCC $ \ exit -> do
-        str <- dosomething hdl `catchM` \ (e :: SomeException) -> do
-            -- Cleanup
-            liftIO $ hClose hdl
-            liftIO $ putStrLn $ "Err: " <> show e
-            liftIO $ putStrLn "Error occured, handle closed normally."
---            return "Exit!!"
-            exit "Exit!!"
+
+    let
+         errorhandler :: SomeException -> Concurrent String
+         errorhandler e = do
+             liftIO $ hClose hdl
+             liftIO $ putStrLn $ "Err: " <> show e
+             liftIO $ putStrLn "Error occured, handle closed normally."
+             return "Exit!!"
+
+    exitStr <- handleM errorhandler $ do
+        str <- dosomething hdl
+        str1 <- dosomething hdl
+        str2 <- dosomething hdl
+
+--    exitStr <- callCC $ \ exit -> do
+--        str <- dosomething hdl `catchM` \ (e :: SomeException) -> do
+--            -- Cleanup
+--            liftIO $ hClose hdl
+--            liftIO $ putStrLn $ "Err: " <> show e
+--            liftIO $ putStrLn "Error occured, handle closed normally."
+----            return "Exit!!"
+--            exit "Exit!!"
         liftIO $ putStrLn str
---        exit "Exit abnormally..."
+        liftIO $ putStrLn str1
+        liftIO $ putStrLn str2
         errorOccur str
         return "ExitCont??"
 --        return $ str ++ "\n" ++ str
@@ -44,20 +62,26 @@ main = runConcurrent putStrLn $ do
 
 
 
--- Temporary, ignore exit continuation in Concurrent.
 catchM :: Exception e => Concurrent a -> (e -> Concurrent a) -> Concurrent a
 catchM action handler =
-    ContT $ \cont -> do -- StateT
-        StateT $ \s -> do -- IO
-            runStateT (runContT action cont) s
+    callCC $ \exit -> do
+        ContT $ \cont -> do -- StateT
+            StateT $ \s -> do -- IO
+                runStateT (runContT action cont) s
+                    `catch` \e -> runStateT (runContT (handler e) (\a -> runContT (exit a) return)) s
 
-            `catch` \e -> do
-                runStateT (runContT (handler e) cont) s
+handleM :: Exception e => (e -> Concurrent a) -> Concurrent a -> Concurrent a
+handleM = flip catchM
+
+--onExceptionM :: Concurrent a -> Concurrent b -> Concurrent a
+--onExceptionM action handler = action `catchM` \ (e :: SomeException) -> do
+--    _ <- handler
+--    liftIO $ throwIO e
 
 --catchM :: Exception e => Concurrent a -> (e -> Concurrent a) -> Concurrent a
 --catchM action handler =
 --    ContT $ \cont -> do -- StateT
---        exit :: (a -> StateT (a -> IO ()) IO ()) <- get
+--        exit :: (a -> StateT (a -> IO ()) IO ()) <- get -- ???
 --        StateT $ \s -> do -- IO
 --            runStateT (runContT action cont) s
 --
@@ -89,6 +113,12 @@ errorOccur str = do
 --    lift $ put oldCont
 --    return res
 
-
---forkFinally :: Concurrent a -> (Either SomeException a -> Concurrent ()) -> Concurrent ThreadId
---forkFinally action handler = ContT $ \cont -> runConcurrent cont action
+--forkFinally :: Concurrent a a -> (Either SomeException a -> Concurrent () ()) -> Concurrent () ThreadId
+--forkFinally action handler = ContT $ \cont -> do -- StateT
+--    tid <- StateT $ \exit -> do -- IO
+--        tid <- Conc.forkFinally
+--                (evalStateT (runContT action (return)) exit)
+----                (\e -> handler e)
+--                (\e -> void $ runStateT (runContT (handler e) (liftIO . exit)) exit) -- ???
+--        return (tid, exit)
+--    cont tid
