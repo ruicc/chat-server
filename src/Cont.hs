@@ -9,11 +9,12 @@ import System.IO
 import Data.Monoid
 
 --type Concurrent r a = ContT r (StateT (a -> IO r) IO) a
-type Concurrent a = ContT () (StateT (a -> IO ()) IO) a
---type Concurrent a = ContT () IO a
+--type Concurrent a = ContT () (StateT (a -> IO ()) IO) a
+type Concurrent a = ContT () IO a
 
 runConcurrent :: (a -> IO ()) -> Concurrent a -> IO ()
-runConcurrent cont action = flip evalStateT cont $ runContT action (liftIO . cont)
+--runConcurrent cont action = flip evalStateT cont $ runContT action (liftIO . cont)
+runConcurrent cont action = runContT action (liftIO . cont)
 
 --instance MonadState Concurrent (a -> IO ()) where
 
@@ -65,10 +66,14 @@ main = runConcurrent putStrLn $ do
 catchM :: Exception e => Concurrent a -> (e -> Concurrent a) -> Concurrent a
 catchM action handler =
     callCC $ \exit -> do
-        ContT $ \cont -> do -- StateT
-            StateT $ \s -> do -- IO
-                runStateT (runContT action cont) s
-                    `catch` \e -> runStateT (runContT (handler e) (\a -> runContT (exit a) return)) s
+        ContT $ \cont -> runContT action cont
+                    `catch` \e -> runContT (handler e) (\a -> runContT (exit a) return)
+--catchM action handler =
+--    callCC $ \exit -> do
+--        ContT $ \cont -> do -- StateT
+--            StateT $ \s -> do -- IO
+--                runStateT (runContT action cont) s
+--                    `catch` \e -> runStateT (runContT (handler e) (\a -> runContT (exit a) return)) s
 
 handleM :: Exception e => (e -> Concurrent a) -> Concurrent a -> Concurrent a
 handleM = flip catchM
@@ -77,22 +82,6 @@ handleM = flip catchM
 --onExceptionM action handler = action `catchM` \ (e :: SomeException) -> do
 --    _ <- handler
 --    liftIO $ throwIO e
-
---catchM :: Exception e => Concurrent a -> (e -> Concurrent a) -> Concurrent a
---catchM action handler =
---    ContT $ \cont -> do -- StateT
---        exit :: (a -> StateT (a -> IO ()) IO ()) <- get -- ???
---        StateT $ \s -> do -- IO
---            runStateT (runContT action cont) s
---
---            `catch` \e -> do
---                runStateT (runContT (handler e) exit) s
---catchM :: Exception e => Concurrent a -> (e -> Concurrent a) -> Concurrent a
---catchM action handler =
---    ContT $ \ cont -> StateT $ \ s ->
---        runConcurrent cont action `catch` \ err -> do
---            exit <- lift get
---            runConcurrent exit (handler err)
 
 dosomething :: Handle -> Concurrent String
 dosomething hdl = do
