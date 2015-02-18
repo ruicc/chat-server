@@ -143,6 +143,7 @@ executable cont
     , OverloadedStrings
     , RecordWildCards
     , TemplateHaskell
+    , RankNTypes
   build-depends:
       base >= 4.7 && <4.8
     , async
