@@ -14,13 +14,24 @@ import           Control.Exception (Exception(..))
 
 
 type ThreadId = Conc.ThreadId
-type Concurrent a = forall r. ContT r IO a
+type Concurrent' r a = ContT r IO a
+type Concurrent a = forall r. Concurrent' r a
+
+--type ConcurrentSTM a = forall r. ContT r STM a
 
 runConcurrent :: (a -> IO r) -> Concurrent a -> IO r
 runConcurrent cont action = runContT action (liftIO . cont)
 
 runSTM :: STM.STM a -> Concurrent a
 runSTM = liftIO . STM.atomically
+
+joinC :: Concurrent (Concurrent a) -> Concurrent a
+joinC mm = do
+    let
+        run :: Concurrent a -> IO a
+        run m = runConcurrent return m
+
+    liftIO $ join $ run (fmap run mm)
 
 
 
@@ -82,7 +93,7 @@ myThreadId :: Concurrent ThreadId
 myThreadId = liftIO Conc.myThreadId
 
 forkC :: Concurrent () -> Concurrent ThreadId
-forkC action = liftIO $ Conc.forkIO $ runConcurrent return action
+forkC action = liftIO $ Conc.forkIO $ runConcurrent (\() -> return ()) action
 
 forkFinally :: Concurrent a -> (Either SomeException a -> Concurrent ()) -> Concurrent ThreadId
 forkFinally action and_then = do
