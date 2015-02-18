@@ -3,7 +3,7 @@ module Main where
 import Control.Applicative
 import Control.Monad.Cont
 import Control.Monad.State
-import Control.Concurrent as Conc
+--import qualified Control.Concurrent as Conc
 import Control.Concurrent.STM as STM
 import qualified Control.Exception as E
 import System.IO
@@ -16,7 +16,7 @@ main = runConcurrent putStrLn $ do
     hdl <- liftIO $ openFile path ReadMode
 
     let
-         errorhandler :: E.SomeException -> Concurrent String
+         errorhandler :: SomeException -> Concurrent String
          errorhandler e = do
              liftIO $ hClose hdl
              liftIO $ putStrLn $ "Err: " <> show e
@@ -38,15 +38,15 @@ main = runConcurrent putStrLn $ do
 
     tv :: TVar Int <- liftIO $ newTVarIO 0
 
-    fork $ do
+    forkC $ do
         let
             loop = do
-                wait $ 1 * 1000 * 1000
+                threadDelay $ 1 * 1000 * 1000
                 runSTM $ modifyTVar' tv succ
                 loop
         loop
 
-    wait $ 3 * 1000 * 1000
+    threadDelay $ 3 * 1000 * 1000
 
     n <- runSTM $ readTVar tv
 
@@ -59,6 +59,6 @@ dosomething hdl = do
 
 errorOccur :: String -> Concurrent String
 errorOccur str = do
-    liftIO $ E.throwIO $ E.ErrorCall "Heyhey, error Occured"
+    throwC $ E.ErrorCall "Heyhey, error Occured"
     liftIO $ putStrLn str
     return str
