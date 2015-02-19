@@ -18,8 +18,8 @@ type ThreadId = Conc.ThreadId
 type CIO r a = ContT r IO a
 type CSTM r a = ContT r STM a
 
-type Concurrent a = CIO () a
-type ConcurrentSTM a = ContT () STM a
+--type Concurrent a = CIO () a
+--type ConcurrentSTM a = ContT () STM a
 
 runCIO :: (a -> IO r) -> CIO r a -> IO r
 runCIO cont action = runContT action cont
@@ -27,12 +27,12 @@ runCIO cont action = runContT action cont
 runCSTM :: (a -> STM r) -> CSTM r a -> STM r
 runCSTM cont action = runContT action cont
 
-runConcurrent :: Concurrent a -> IO ()
-runConcurrent action = runCIO (const $ return ()) action
-
-
-runSTM :: STM a -> Concurrent a
+--runConcurrent :: Concurrent a -> IO ()
+--runConcurrent action = runCIO (const $ return ()) action
+--
+runSTM :: STM a -> CIO r a
 runSTM = liftIO . STM.atomically
+
 
 --joinC :: Concurrent (Concurrent a) -> Concurrent a
 --joinC mm = do
@@ -65,10 +65,11 @@ onException action handler =
         _ <- handler
         liftIO $ E.throwIO e
 
---try :: E.Exception e => CIO r a -> CIO r (Either e a)
---try action = liftIO $ E.try (runConcurrent return action)
+try :: E.Exception e => CIO r a -> CIO r (Either e a)
+try action = fmap Right action `catch` \ e -> return $ Left e
 
-mask :: ((forall a. CIO r a -> CIO r a) -> CIO r b) -> CIO r b
+
+mask :: ((forall r' a. CIO r' a -> CIO r' a) -> CIO r b) -> CIO r b
 mask userAction = ContT $ \cont -> E.mask $ \ (unblock :: forall a. IO a -> IO a) ->
     let
         restore :: forall r a. CIO r a -> CIO r a
@@ -95,20 +96,25 @@ finally action final = mask $ \restore -> do
     _ <- final
     return r
 
---------------------------------------------------------------------------------------------
----- | Concurrent
---
---myThreadId :: Concurrent ThreadId
---myThreadId = liftIO Conc.myThreadId
---
---forkC :: Concurrent () -> Concurrent ThreadId
---forkC action = liftIO $ Conc.forkIO $ runConcurrent (\() -> return ()) action
---
---forkFinally :: Concurrent a -> (Either SomeException a -> Concurrent ()) -> Concurrent ThreadId
---forkFinally action and_then = do
---    mask $ \ restore ->
---        forkC $ try (restore action) >>= and_then
---
+------------------------------------------------------------------------------------------
+-- | Concurrent
+
+myThreadId :: CIO r ThreadId
+myThreadId = liftIO Conc.myThreadId
+
+forkC :: (a -> IO r') -> CIO r' a -> CIO r ThreadId
+forkC k action = liftIO $ Conc.forkIO (void $ runCIO k action)
+
+forkC_ :: CIO () () -> CIO r ThreadId
+forkC_ action = liftIO $ Conc.forkIO $ runCIO (\ () -> return ()) action
+
+forkFinally :: CIO r' a -> (Either SomeException a -> CIO r' r') -> CIO r ThreadId
+forkFinally action final =
+    mask $ \ restore ->
+        forkC
+            (\ either -> runCIO return (final either))
+            (try $ restore action)
+
 --forkCWithUnmask :: ((forall a. Concurrent a -> Concurrent a) -> Concurrent ()) -> Concurrent ThreadId
 --forkCWithUnmask userAction = liftIO $ Conc.forkIOWithUnmask $ \ (unmaskIO :: forall a. IO a -> IO a) -> 
 --    let
@@ -116,9 +122,9 @@ finally action final = mask $ \restore -> do
 --        unmask action = liftIO $ unmaskIO $ runConcurrent return action
 --    in
 --        runConcurrent return (userAction unmask)
---
---killThread :: ThreadId -> Concurrent ()
---killThread = liftIO . Conc.killThread
---
---threadDelay :: Int -> Concurrent ()
---threadDelay = liftIO . Conc.threadDelay
+
+killThread :: ThreadId -> CIO r ()
+killThread = liftIO . Conc.killThread
+
+threadDelay :: Int -> CIO r ()
+threadDelay = liftIO . Conc.threadDelay
