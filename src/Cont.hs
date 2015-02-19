@@ -4,7 +4,7 @@ module Main where
 import Control.Monad.Cont
 --import Control.Monad.State
 --import qualified Control.Concurrent as Conc
-import Control.Concurrent.STM as STM
+--import qualified Control.Concurrent.STM as STM
 import qualified Control.Exception as E
 import System.IO
 import Data.Monoid
@@ -47,22 +47,22 @@ main = void $ runCIO return $ do
 --    liftIO $ putStrLn $ "Exit string: " <> exitStr
 
 
-    tv :: TVar Int <- liftIO $ newTVarIO 0
+    tv :: TVar Int <- newTVarCIO 0
 
     forkC_ $ do
         let
             loop = do
-                runSTM $ modifyTVar' tv succ
+                atomically_ $ modifyTVar' tv succ
                 threadDelay $ 100 * 1000
                 loop
         loop
 
     threadDelay $ 1 * 1000 * 1000
 
-    n <- runSTM $ readTVar tv
+    n <- atomically_ $ readTVar tv
 
-    -- error?
---    joinC $ runSTM $ readPrint tv
+    -- Nested Actions: error? => OK!!
+    join $ atomically_ $ readPrint tv
 
     liftIO $ putStrLn $ "fork & STM : " <> show n
 
@@ -78,9 +78,8 @@ errorOccur str = do
     liftIO $ putStrLn str
     return str
 
-
---readPrint :: TVar Int -> STM (Concurrent ())
---readPrint tv = do
---    n <- readTVar tv
---    return $ liftIO $ do
---        print n
+readPrint :: TVar Int -> CSTM r' (CIO r ())
+readPrint tv = do
+    n <- readTVar tv
+    return $ do
+        liftIO $ putStrLn $ "Nested Actions : " <> show n

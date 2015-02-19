@@ -6,42 +6,41 @@ import           Prelude as P
 import           Control.Monad.Cont
 --import           Control.Monad.State
 import qualified Control.Concurrent as Conc
-import           Control.Concurrent.STM (STM)
-import qualified Control.Concurrent.STM as STM
+import qualified Control.Concurrent.STM as S
 import qualified Control.Exception as E
 import           Control.Exception (Exception(..))
+import           System.Mem.Weak
 --import           System.IO
 --import           Data.Monoid
 
 
 type ThreadId = Conc.ThreadId
 type CIO r a = ContT r IO a
-type CSTM r a = ContT r STM a
+type CSTM r a = ContT r S.STM a
 
 --type Concurrent a = CIO () a
---type ConcurrentSTM a = ContT () STM a
+--type ConcurrentSTM a = ContT () S.STM a
 
 runCIO :: (a -> IO r) -> CIO r a -> IO r
 runCIO cont action = runContT action cont
 
-runCSTM :: (a -> STM r) -> CSTM r a -> STM r
+runCSTM :: (a -> S.STM r) -> CSTM r a -> S.STM r
 runCSTM cont action = runContT action cont
+
+atomically :: (a -> S.STM r') -> CSTM r' a -> CIO r r'
+atomically cont action = liftIO $ S.atomically $ runCSTM cont action
+
+atomically_ :: CSTM r' r' -> CIO r r'
+atomically_ = atomically return
 
 --runConcurrent :: Concurrent a -> IO ()
 --runConcurrent action = runCIO (const $ return ()) action
---
-runSTM :: STM a -> CIO r a
-runSTM = liftIO . STM.atomically
 
+runSTM :: S.STM a -> CIO r a
+runSTM = liftIO . S.atomically
 
---joinC :: Concurrent (Concurrent a) -> Concurrent a
---joinC mm = do
---    let
---        run :: Concurrent a -> IO a
---        run m = runConcurrent return m
---
---    liftIO $ join $ run (fmap run mm)
-
+liftSTM :: S.STM a -> CSTM r a
+liftSTM m = ContT (m >>=)
 
 
 ------------------------------------------------------------------------------------------
@@ -91,9 +90,9 @@ bracket before after thing = mask $ \restore -> do
     return r
 
 finally :: CIO r a -> CIO r b -> CIO r a
-finally action final = mask $ \restore -> do
-    r <- restore action `onException` final 
-    _ <- final
+finally action finalizer = mask $ \restore -> do
+    r <- restore action `onException` finalizer 
+    _ <- finalizer
     return r
 
 ------------------------------------------------------------------------------------------
@@ -109,10 +108,10 @@ forkC_ :: CIO () () -> CIO r ThreadId
 forkC_ action = liftIO $ Conc.forkIO $ runCIO (\ () -> return ()) action
 
 forkFinally :: CIO r' a -> (Either SomeException a -> CIO r' r') -> CIO r ThreadId
-forkFinally action final =
+forkFinally action finalizer =
     mask $ \ restore ->
         forkC
-            (\ either -> runCIO return (final either))
+            (\ e -> runCIO return (finalizer e))
             (try $ restore action)
 
 --forkCWithUnmask :: ((forall a. Concurrent a -> Concurrent a) -> Concurrent ()) -> Concurrent ThreadId
@@ -128,3 +127,89 @@ killThread = liftIO . Conc.killThread
 
 threadDelay :: Int -> CIO r ()
 threadDelay = liftIO . Conc.threadDelay
+
+
+
+------------------------------------------------------------------------------------------
+-- | STM
+
+type STM = S.STM
+type TVar = S.TVar
+type TChan = S.TChan
+
+retry :: CSTM r a
+retry = liftSTM S.retry
+
+orElse :: CSTM r a -> CSTM r a -> CSTM r a
+orElse m n = ContT $ \ k -> S.orElse (runCSTM k m) (runCSTM k n)
+
+check :: Bool -> CSTM r ()
+check = liftSTM . S.check
+
+catchSTM :: Exception e => CSTM r a -> (e -> CSTM r a) -> CSTM r a
+catchSTM action handler =
+    callCC $ \ exit ->
+        ContT $ \ k -> S.catchSTM (runCSTM k action) (\e -> runCSTM (\a -> runCSTM return (exit a)) $ handler e)
+
+newTVar :: a -> CSTM r (TVar a)
+newTVar = liftSTM . S.newTVar
+
+newTVarCIO :: a -> CIO r (TVar a)
+newTVarCIO = liftIO . S.newTVarIO
+
+readTVar :: TVar a -> CSTM r a
+readTVar = liftSTM . S.readTVar
+
+readTVarCIO :: TVar a -> CIO r a
+readTVarCIO = liftIO . S.readTVarIO
+
+writeTVar :: TVar a -> a -> CSTM r ()
+writeTVar = (liftSTM .) . S.writeTVar
+
+modifyTVar :: TVar a -> (a -> a) -> CSTM r ()
+modifyTVar = (liftSTM .) . S.modifyTVar
+
+modifyTVar' :: TVar a -> (a -> a) -> CSTM r ()
+modifyTVar' = (liftSTM .) . S.modifyTVar'
+
+swapTVar :: TVar a -> a -> CSTM r a
+swapTVar = (liftSTM .) . S.swapTVar
+
+registerDelay :: Int -> CIO r (TVar Bool)
+registerDelay = liftIO . S.registerDelay
+
+mkWeakTVar :: TVar a -> CIO () () -> CIO r (Weak (TVar a))
+mkWeakTVar tv finalizer = liftIO $ S.mkWeakTVar tv (runCIO (return) finalizer)
+
+newTChan :: CSTM r (TChan a)
+newTChan = liftSTM S.newTChan
+
+newTChanCIO :: CIO r (TChan a)
+newTChanCIO = liftIO S.newTChanIO
+
+newBroadcastTChan :: CSTM r (TChan a)
+newBroadcastTChan = liftSTM S.newBroadcastTChan
+
+dupTChan :: TChan a -> CSTM r (TChan a)
+dupTChan = liftSTM . S.dupTChan
+
+cloneTChan :: TChan a -> CSTM r (TChan a)
+cloneTChan = liftSTM . S.cloneTChan
+
+readTChan :: TChan a -> CSTM r a
+readTChan = liftSTM . S.readTChan
+
+tryReadTChan :: TChan a -> CSTM r (Maybe a)
+tryReadTChan = liftSTM . S.tryReadTChan
+
+tryPeekTChan :: TChan a -> CSTM r (Maybe a)
+tryPeekTChan = liftSTM . S.tryPeekTChan
+
+writeTChan :: TChan a -> a -> CSTM r ()
+writeTChan = (liftSTM .) . S.writeTChan
+
+unGetTChan :: TChan a -> a -> CSTM r ()
+unGetTChan = (liftSTM .) . S.unGetTChan
+
+isEmptyTChan :: TChan a -> CSTM r Bool
+isEmptyTChan = liftSTM . S.isEmptyTChan
