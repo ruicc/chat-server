@@ -68,7 +68,7 @@ executable server
     -O2
     -threaded
     -with-rtsopts=-N
---    -ddump-simpl
+    -ddump-simpl
   default-language:
     Haskell2010
 
@@ -160,6 +160,7 @@ executable cont
     src
   ghc-options:
     -Wall
+    -ddump-simpl
   default-language:
     Haskell2010
 

@@ -2,6 +2,8 @@ module Main where
 
 import App.Prelude
 import App.Config
+import Control.Concurrent
+import Control.Concurrent.STM
 import Client.Types
 import Client.Actions
 import Client.Utils
@@ -83,4 +85,3 @@ receiver cl@Client{..} = do
         Just msg -> atomically $ writeTChan clientChan msg
         Nothing -> return ()
     receiver cl
-   

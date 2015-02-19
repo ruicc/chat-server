@@ -30,7 +30,7 @@ spawnLogger erCh stCh logCh = do
             str <- atomically_ $ do
                 writeTChan stCh Logging
                 readTChan ch
-            when (not $ null str) (liftIO $ putStrLn $ "Log: " <> str)
+--            when (not $ null str) (liftIO $ putStrLn $ "Log: " <> str)
             return ()
 
     _tid <- fork_ $ supervisor logCh

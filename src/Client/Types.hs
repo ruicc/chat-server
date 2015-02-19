@@ -1,6 +1,7 @@
 module Client.Types where
 
 import App.Prelude
+import Control.Concurrent.STM
 
 
 type ClientId = Int

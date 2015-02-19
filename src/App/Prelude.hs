@@ -44,7 +44,6 @@ import qualified Data.Text as T
 import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
 
 import qualified System.IO as IO
-import           Concurrent
 
 expr :: Show a => a -> ShortByteString
 expr = toShort . B.Char.pack . P.show
