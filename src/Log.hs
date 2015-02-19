@@ -2,13 +2,16 @@ module Log where
 
 import           App.Prelude
 import qualified Data.ByteString as B
-import           Control.Concurrent
-import           Control.Exception
+--import           Control.Concurrent
+--import           Control.Concurrent.STM
+--import           Control.Exception
+
+import           Concurrent
 
 
 type LogChan = TChan ShortByteString
 
-spawnLogger :: ErrorChan -> StatChan -> LogChan -> IO ()
+spawnLogger :: ErrorChan -> StatChan -> LogChan -> CIO r ()
 spawnLogger erCh stCh logCh = do
     let
         supervisor ch = do
@@ -18,19 +21,19 @@ spawnLogger erCh stCh logCh = do
                 <- try $ wait as
             case res of
                 Left e -> do
-                    atomically $ writeTChan erCh e
+                    atomically_ $ writeTChan erCh e
                     supervisor ch
                 Right _ -> error "ここには来ない"
 
-        logger :: LogChan -> IO ()
+        logger :: LogChan -> CIO r ()
         logger ch = forever $ do
-            str <- atomically $ do
+            str <- atomically_ $ do
                 writeTChan stCh Logging
                 readTChan ch
-            when (not $ null str) $ putStrLn $ "Log: " <> str
+            when (not $ null str) (liftIO $ putStrLn $ "Log: " <> str)
             return ()
 
-    _tid <- forkIO $ supervisor logCh
+    _tid <- fork_ $ supervisor logCh
     return ()
 
 ------------------------------------------------------------------------------------------
@@ -58,9 +61,9 @@ data AppStat = AppStat
     , logging :: TVar Int
     }
 
-printStat :: AppStat -> IO ()
+printStat :: AppStat -> CIO r ()
 printStat AppStat{..} = do
-    (cn, cl, gn, gc, gj, gl, se, l) <- atomically $ do
+    (cn, cl, gn, gc, gj, gl, se, l) <- atomically_ $ do
         cn <- readTVar $ clientNew
         cl <- readTVar $ clientLeft
         gn <- readTVar $ groupNew
@@ -70,7 +73,7 @@ printStat AppStat{..} = do
         se <- readTVar $ systemErrors
         l <-  readTVar $ logging
         return (cn, cl, gn, gc, gj, gl, se, l)
-    putStrLn $ mconcat
+    liftIO $ putStrLn $ mconcat
         [ "cl new: " <> expr cn <> ", "
         , "cl left: " <> expr cl <> ", "
         , "gr new: " <> expr gn <> ", "
@@ -82,23 +85,24 @@ printStat AppStat{..} = do
         ]
 
 
-zeroStat :: IO AppStat
+zeroStat :: CIO r AppStat
 zeroStat = do
-    cn <- newTVarIO 0
-    cl <- newTVarIO 0
-    gn <- newTVarIO 0
-    gc <- newTVarIO 0
-    gj <- newTVarIO 0
-    gl <- newTVarIO 0
-    se <- newTVarIO 0
-    l <- newTVarIO 0
+    cn <- newTVarCIO 0
+    cl <- newTVarCIO 0
+    gn <- newTVarCIO 0
+    gc <- newTVarCIO 0
+    gj <- newTVarCIO 0
+    gl <- newTVarCIO 0
+    se <- newTVarCIO 0
+    l <- newTVarCIO 0
     return $ AppStat cn cl gn gc gj gl se l
 
 
-spawnStatAggregator :: ErrorChan -> StatChan -> AppStat -> IO ()
+spawnStatAggregator :: ErrorChan -> StatChan -> AppStat -> CIO r ()
 spawnStatAggregator erCh stCh stat = do
     let
 
+        supervisor :: StatChan -> AppStat -> CIO r ()
         supervisor ch astat = do
             as :: Async ()
                 <- async (aggregator ch astat)
@@ -107,14 +111,14 @@ spawnStatAggregator erCh stCh stat = do
 
             case res of
                 Left e -> do
-                    atomically $ writeTChan erCh e
+                    atomically_ $ writeTChan erCh e
                     supervisor ch astat
                 Right _ -> error "ここには来ない"
 
-        aggregator :: StatChan -> AppStat -> IO ()
+        aggregator :: StatChan -> AppStat -> CIO r ()
         aggregator ch tsum = do
-            st <- atomically $ readTChan ch
-            atomically $ aggregate tsum st
+            st <- atomically_ $ readTChan ch
+            atomically_ $ aggregate tsum st
             aggregator ch tsum
 
         aggregate astat ClientNew   = modifyTVar' (clientNew    astat) succ
@@ -126,14 +130,14 @@ spawnStatAggregator erCh stCh stat = do
         aggregate astat SystemError = modifyTVar' (systemErrors astat) succ
         aggregate astat Logging     = modifyTVar' (logging      astat) succ
 
-    _tid <- forkIO $ supervisor stCh stat
+    _tid <- fork_ $ supervisor stCh stat
     return ()
 
 ------------------------------------------------------------------------------------------
 
 type ErrorChan = TChan SomeException
 
-spawnErrorCollector :: ErrorChan -> StatChan -> AppStat -> IO ()
+spawnErrorCollector :: ErrorChan -> StatChan -> AppStat -> CIO r ()
 spawnErrorCollector erCh stCh stat = do
     let
         supervisor ch tsum = do
@@ -143,25 +147,25 @@ spawnErrorCollector erCh stCh stat = do
                 <- try $ wait as
             case res of
                 Left e -> do
-                    atomically $ writeTChan ch e
+                    atomically_ $ writeTChan ch e
                     supervisor ch tsum
                 Right _ -> error "ここには来ない"
 
-        collector :: ErrorChan -> IO ()
+        collector :: ErrorChan -> CIO r ()
         collector ch = forever $ do
-            err <- atomically $ readTChan ch
-            putStrLn $ "Err: " <> expr err
-            atomically $ writeTChan stCh SystemError
+            err <- atomically_ $ readTChan ch
+            liftIO $ putStrLn $ "Err: " <> expr err
+            atomically_ $ writeTChan stCh SystemError
 
-    _tid <- forkIO $ supervisor erCh stat
+    _tid <- fork_ $ supervisor erCh stat
     return ()
 
 ------------------------------------------------------------------------------------------
 
 spawnCollectorThreads :: IO (ErrorChan, StatChan, LogChan)
-spawnCollectorThreads = do
+spawnCollectorThreads = runCIO return $ do
     let
-        outputRepeatedly :: AppStat -> IO ()
+        outputRepeatedly :: AppStat -> CIO r ()
         outputRepeatedly stat = do
             printStat stat
             threadDelay $ 5 * 1000 * 1000
@@ -170,23 +174,23 @@ spawnCollectorThreads = do
     stat <- zeroStat
 
     erCh :: ErrorChan
-        <- newTChanIO
+        <- newTChanCIO
     stCh :: StatChan
-        <- newTChanIO
+        <- newTChanCIO
     logCh :: LogChan
-        <- newTChanIO
+        <- newTChanCIO
 
     spawnErrorCollector erCh stCh stat
     spawnStatAggregator erCh stCh stat
     spawnLogger erCh stCh logCh
 
-    forkIO $ dummyLogSender logCh
+    fork_ $ dummyLogSender logCh
 
-    _tid2 <- forkIO $ outputRepeatedly stat
+    _tid2 <- fork_ $ outputRepeatedly stat
     return (erCh, stCh, logCh)
 
 dummyLogSender logCh = do
     threadDelay $ 5 * 1000 * 1000
-    atomically $ writeTChan logCh ""
+    atomically_ $ writeTChan logCh ""
     dummyLogSender logCh
 

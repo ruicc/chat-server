@@ -15,13 +15,13 @@ import           Concurrent
 
 
 
-runClientThread :: Server -> Handle -> IO ()
-runClientThread srv@Server{..} hdl = runConcurrent (const $ return ()) $ do
+runClientThread :: Server -> Handle -> Concurrent ()
+runClientThread srv@Server{..} hdl = do
     let
         showGroups :: Server -> Client -> Concurrent ()
         showGroups srv cl = do
             grs :: [(GroupId, Group)]
-                <- runSTM $ getAllGroups srv
+                <- atomically_ $ getAllGroups srv
 
             clientPut cl $ "!groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
 --            clientPut cl $ mconcat
@@ -49,7 +49,7 @@ runClientThread srv@Server{..} hdl = runConcurrent (const $ return ()) $ do
                 <- getUserInput cl
 
             case words input of
-                ["/quit"] -> throwC QuitGame
+                ["/quit"] -> throwCIO QuitGame
 
                 ["/new", name, capacity', timeout'] -> do
                     let
@@ -61,8 +61,8 @@ runClientThread srv@Server{..} hdl = runConcurrent (const $ return ()) $ do
                             ts <- liftIO Time.getUnixTimeAsInt
 
                             mask $ \restore -> do
-                                mNewGroup :: Maybe (Group, Concurrent' () ())
-                                    <- getGroupAndJoin
+                                mNewGroup :: Maybe (Group, Concurrent ())
+                                    <- join $ atomically_ $ getGroupAndJoin
                                         cl
                                         (Just <$> createGroup srv gid name capacity playTime ts timeout)
                                 case mNewGroup of
@@ -84,8 +84,8 @@ runClientThread srv@Server{..} hdl = runConcurrent (const $ return ()) $ do
                     case readInt gid' of
                         Just (gid, _) -> do
                             mask $ \restore -> do
-                                mNewGroup :: Maybe (Group, Concurrent' () ())
-                                    <- getGroupAndJoin
+                                mNewGroup :: Maybe (Group, Concurrent ())
+                                    <- join $ atomically_ $ getGroupAndJoin
                                         cl
                                         (getGroup srv gid)
                                 case mNewGroup of
@@ -106,15 +106,20 @@ runClientThread srv@Server{..} hdl = runConcurrent (const $ return ()) $ do
 
         -- This signature might be a bit scary, but it just combines 2 actions,
         -- getGr and addClient.
-        getGroupAndJoin :: Client -> STM (Maybe Group) -> Concurrent (Maybe (Group, Concurrent' () ()))
-        getGroupAndJoin cl getGr = liftIO $ join $ atomically $ do
+        getGroupAndJoin
+--            :: (r ~ Concurrent (Maybe (Group, Concurrent ())))
+            :: Client
+            -> CSTM r (Maybe Group)
+            -> CSTM r (Concurrent (Maybe (Group, Concurrent ())))
+        getGroupAndJoin cl getGr = do -- CSTM
 
             -- NOTICE: Getting a group might fail due to removing group.
             mgr :: Maybe Group <- getGr
             case mgr of
-                Just gr -> do
+                Just gr -> do -- CSTM
                     -- NOTICE: Joining a group might fail due to room capacity.
-                    mOnJoin <- addClient srv cl gr
+                    mOnJoin :: Maybe (Concurrent ())
+                        <- addClient srv cl gr
                     case mOnJoin of
                         -- OK, User joined.
                         Just onJoin -> return $ return $ Just (gr, onJoin)
@@ -133,7 +138,7 @@ runClientThread srv@Server{..} hdl = runConcurrent (const $ return ()) $ do
 initClient :: Server -> Handle -> Concurrent Client
 initClient srv hdl = do
     cl <- newClient hdl
-    liftIO $ tick srv $ Log.ClientNew
+    tick srv $ Log.ClientNew
     clientPut cl $ "!init " <> (expr $ clientId cl) <> "\n"
 --    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
     return cl
@@ -158,39 +163,39 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
     let
         broadcastReceiver :: TChan Message -> Concurrent ()
         broadcastReceiver broadcastCh = forever $ do
-            runSTM $ do
+            atomically_ $ do
                 msg :: Message
                     <- readTChan broadcastCh
                 sendMessage cl msg
 --            logger $ "BroadcastReceiver works"
 
-        receiver :: Concurrent' () ()
+        receiver :: Concurrent ()
         receiver = forever $ do
             str <- clientGet srv cl
 
 --            logger $ "Client<" <> (expr clientId) <> "> entered raw strings: " <> expr str
-            runSTM $ sendMessage cl (Command str)
+            atomically_ $ sendMessage cl (Command str)
 
-        server :: Concurrent' () ()
+        server :: Concurrent ()
         server = do
 
             msg :: Message
-                <- runSTM $ readTChan clientChan
+                <- atomically_ $ readTChan clientChan
             continue <- handleMessage srv gr cl msg
             when continue server
             -- Left the room if continue == False.
 
-        race_' :: Concurrent' () () -> Concurrent' () () -> Concurrent' () ()
-        race_' a b = liftIO $ race_ (runConcurrent return a) (runConcurrent return b)
+--        race_' :: Concurrent () -> Concurrent () -> Concurrent ()
+--        race_' a b = liftIO $ race_ (runConcurrent return a) (runConcurrent return b)
 
-    broadcastCh <- runSTM $ dupTChan groupBroadcastChan
+    broadcastCh <- atomically_ $ dupTChan groupBroadcastChan
 
     -- Spawn 3 linked threads.
-    race_' (broadcastReceiver broadcastCh) (race_' receiver server)
+    race_ (broadcastReceiver broadcastCh) (race_ receiver server)
 
 
 -- | Add client to group. Returned action is to show latest history.
-addClient :: Server -> Client -> Group -> STM (Maybe (Concurrent' () ()))
+addClient :: Server -> Client -> Group -> CSTM r (Maybe (Concurrent ()))
 addClient srv@Server{..} cl@Client{..} gr@Group{..} = do
     clientMap <- readTVar groupMembers
     cnt <- readTVar groupMemberCount
@@ -204,7 +209,7 @@ addClient srv@Server{..} cl@Client{..} gr@Group{..} = do
             -- Room is full.
             then return Nothing
 
-            else do -- STM
+            else do -- CSTM
                 writeTVar groupMembers $ IM.insert clientId cl clientMap
                 modifyTVar' groupMemberCount succ
 
@@ -217,12 +222,12 @@ addClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 
                 sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is joined.")
 
-                return $ Just $ liftIO $ do -- IO
+                return $ Just $ do -- IO
 
                     when (cnt + 1 == groupCapacity) $ do
                         -- Members are gathered.
                         -- TODO: Is Transaction required to get canceler's ThreadId?
-                        killThread =<< (runSTM $ readTMVar groupCanceler)
+                        killThread =<< (atomically_ $ readTMVar groupCanceler)
                         -- TODO: Exception Handling, supervisored threading.
                         spawnControlThread srv gr
 
@@ -236,7 +241,7 @@ addClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 
 
 removeClient :: Server -> Client -> Group -> Concurrent ()
-removeClient srv@Server{..} cl@Client{..} gr@Group{..} = liftIO $ join $ atomically $ do
+removeClient srv@Server{..} cl@Client{..} gr@Group{..} = join $ atomically_ $ do
     cnt <- readTVar groupMemberCount
     mcl :: Maybe Client
         <- getClient clientId gr
@@ -254,7 +259,7 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = liftIO $ join $ atomica
                         onRemove
                 else return Nothing
 
-            return $ liftIO $ do
+            return $ do
                 case mOnRemove of
                     -- Kill timeout canceller
                     Just onRemove -> onRemove
@@ -293,7 +298,7 @@ handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do
 
                 ["/quit"] -> do
                     -- Quit the game.
-                    throwC QuitGame
+                    throwCIO QuitGame
 
                 [] -> do
                     -- Ignore empty messages.
@@ -301,7 +306,7 @@ handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do
 
                 _ -> do
                     tick Log.GroupChat
-                    atomically $ sendBroadcast gr (Broadcast clientId str)
+                    atomically_ $ sendBroadcast gr (Broadcast clientId str)
                     return True
         Broadcast _ _ -> do
             return True
@@ -313,8 +318,8 @@ handleMessage Server{..} gr@Group{..} cl@Client{..} msg = do
 
 
 spawnTimeoutCanceler :: Server -> Group -> Concurrent ()
-spawnTimeoutCanceler srv gr = void $ forkC $ do
+spawnTimeoutCanceler srv gr = void $ fork_ $ do
     tid <- myThreadId
-    atomically $ putTMVar (groupCanceler gr) tid
+    atomically_ $ putTMVar (groupCanceler gr) tid
     threadDelay $ groupTimeout gr * 1000 * 1000
     cancelWaiting srv gr

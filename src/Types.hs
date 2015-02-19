@@ -47,9 +47,9 @@ data Group = Group
     }
 data Server = Server
     { serverGroups :: TVar (IM.IntMap Group)
-    , logger :: ShortByteString -> IO ()
-    , tick :: Log.AppEvent -> IO ()
-    , errorCollector :: SomeException -> IO ()
+    , logger :: ShortByteString -> Concurrent ()
+    , tick :: Log.AppEvent -> Concurrent ()
+    , errorCollector :: SomeException -> Concurrent ()
     }
 data Message
     = Notice ShortByteString
@@ -68,14 +68,14 @@ data GameState = Waiting | BeforePlay | Playing | Result | GroupDeleted
 ------------------------------------------------------------------------------------------
 -- | Server
 
-newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> Concurrent Server
-newServer logCh statCh erCh = liftIO $ do
+newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> IO Server
+newServer logCh statCh erCh = runCIO return $ do
     let
 --        logger str = return ()
-        logger str = atomically $ writeTChan logCh str
-        tick ev = atomically $ writeTChan statCh ev
-        errorCollector e = atomically $ writeTChan erCh e
-    gs <- newTVarIO IM.empty
+        logger str = atomically_ $ writeTChan logCh str
+        tick ev = atomically_ $ writeTChan statCh ev
+        errorCollector e = atomically_ $ writeTChan erCh e
+    gs <- newTVarCIO IM.empty
 
     return $ Server gs logger tick errorCollector
 
@@ -83,7 +83,7 @@ newServer logCh statCh erCh = liftIO $ do
 ------------------------------------------------------------------------------------------
 -- | Group
 
-newGroup :: GroupId -> GroupName -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> STM Group -- STM??? -> Yes. Group(Server) is shared value.
+newGroup :: GroupId -> GroupName -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> CSTM r Group -- CSTM r??? -> Yes. Group(Server) is shared value.
 newGroup gid name capacity playTime ts timeout = do
     clientMap <- newTVar IM.empty
     cnt <- newTVar 0
@@ -108,25 +108,25 @@ newGroup gid name capacity playTime ts timeout = do
        , groupGameController = mTid2
        }
 
-getGroup :: Server -> GroupId -> STM (Maybe Group)
+getGroup :: Server -> GroupId -> CSTM r (Maybe Group)
 getGroup Server{..} gid = do
     groupMap <- readTVar serverGroups
     return $ IM.lookup gid groupMap
 
-getAllGroups :: Server -> STM [(GroupId, Group)]
+getAllGroups :: Server -> CSTM r [(GroupId, Group)]
 getAllGroups Server{..} = do
     groupMap <- readTVar serverGroups
     return $ IM.toList groupMap
 
-createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> STM Group
+createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> CSTM r Group
 createGroup Server{..} gid name capacity playTime ts timeout = do
     gr <- newGroup gid name capacity playTime ts timeout
     modifyTVar' serverGroups $ IM.insert (groupId gr) gr
     return gr
 
 -- FIXME: basic operation and high-level operation should be separated..
--- TODO: STM (Concurrent ())
-deleteGroup :: Server -> Group -> STM (IO ())
+-- TODO: CSTM r (Concurrent ())
+deleteGroup :: Server -> Group -> CSTM r (Concurrent ())
 deleteGroup srv@Server{..} gr@Group{..} = do
     members :: [(ClientId, Client)]
         <- IM.toList <$> readTVar groupMembers
@@ -135,26 +135,26 @@ deleteGroup srv@Server{..} gr@Group{..} = do
 
     tid <- readTMVar groupCanceler
 
-    return $ do -- IO
+    return $ do -- CIO
         forM_ members $ \ (cid, Client{..}) -> do
-            Conc.throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
+            throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
 
         -- Killing the canceler thread must be done at last
         -- so that the canceler thread can call deleteGroup.
-        Conc.killThread tid
+        killThread tid
 
 ------------------------------------------------------------------------------------------
 -- | Client
 
-newClient :: Handle -> Concurrent Client -- STM???
+newClient :: Handle -> Concurrent Client -- CSTM r???
                                  --    -> No. Client is not shared value.
-                                 --    -> Client is shared within Server and Group, but STM isn't required.
-newClient hdl = liftIO $ do
+                                 --    -> Client is shared within Server and Group, but CSTM r isn't required.
+newClient hdl = do
     cid :: Int
-        <- Uniq.hashUnique <$> Uniq.newUnique
+        <- Uniq.hashUnique <$> liftIO Uniq.newUnique
     ch :: TChan Message
-        <- newTChanIO
-    tid <- Conc.myThreadId
+        <- newTChanCIO
+    tid <- myThreadId
     return $ Client
         { clientId = cid
         , clientHandle = hdl
@@ -163,33 +163,33 @@ newClient hdl = liftIO $ do
         }
 
 clientGet :: Server -> Client -> Concurrent ShortByteString
-clientGet Server{..} Client{..} = liftIO $ do
-    str <- rstrip <$> hGetLine clientHandle
-    hFlush clientHandle
+clientGet Server{..} Client{..} = do
+    str <- rstrip <$> (liftIO $ hGetLine clientHandle)
+    liftIO $ hFlush clientHandle
 --    logger $ "(raw) " <> str
     return str
 
 clientPut :: Client -> ShortByteString -> Concurrent ()
-clientPut Client{..} str = liftIO $ do
-    hPutStr clientHandle str
-    hFlush clientHandle
+clientPut Client{..} str = do
+    liftIO $ hPutStr clientHandle str
+    liftIO $ hFlush clientHandle
 
 
 ------------------------------------------------------------------------------------------
 -- | Message
 
-sendMessage :: Client -> Message -> STM ()
+sendMessage :: Client -> Message -> CSTM r ()
 sendMessage Client{..} msg = do
     writeTChan clientChan msg
 
 
-sendBroadcast :: Group -> Message -> STM ()
+sendBroadcast :: Group -> Message -> CSTM r ()
 sendBroadcast gr@Group{..} msg = do
     addHistory gr msg
     writeTChan groupBroadcastChan msg
 
 
-addHistory :: Group -> Message -> STM ()
+addHistory :: Group -> Message -> CSTM r ()
 addHistory Group{..} msg = do
     hist <- readTVar groupHistory
     if length hist >= 20
@@ -197,37 +197,37 @@ addHistory Group{..} msg = do
         then writeTVar groupHistory $ msg : take 19 hist
         else writeTVar groupHistory $ msg : hist
 
-getHistory :: Group -> STM [Message]
+getHistory :: Group -> CSTM r [Message]
 getHistory Group{..} = readTVar groupHistory
 
 
 output :: Client -> Message -> Concurrent ()
-output Client{..} msg = liftIO $ do
+output Client{..} msg = do
     let
         out' (Command _) = return ()
         out' (Broadcast cid str) = hPutStrLn clientHandle $ "Client<" <> expr cid <> "> : " <> str
         out' (Notice str) = hPutStrLn clientHandle $ str
         out' _ = error "Not impl yet"
-    out' msg
+    liftIO $ out' msg
 
 
 ------------------------------------------------------------------------------------------
 -- | Group and Client
 
-getClient :: ClientId -> Group -> STM (Maybe Client)
+getClient :: ClientId -> Group -> CSTM r (Maybe Client)
 getClient cid Group{..} = do
     clientMap <- readTVar groupMembers
     return $ IM.lookup cid clientMap
 
 
 cancelWaiting :: Server -> Group -> Concurrent ()
-cancelWaiting srv@Server{..} gr@Group{..} = liftIO $ join $ atomically $ do -- STM
+cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically_ $ do -- CSTM
     -- Check GameState
     gameSt <- gameState <$> readTVar groupGameState
     case gameSt of
         Waiting -> do
             onRemove <- deleteGroup srv gr
-            return $ do -- IO
+            return $ do -- CIO
                 onRemove
                 logger $ "Canceler removed Group<" <> expr groupId <> ">."
 
@@ -235,12 +235,12 @@ cancelWaiting srv@Server{..} gr@Group{..} = liftIO $ join $ atomically $ do -- S
             logger "Canceler fired, but do nothing"
             return ()
 
-changeGameState :: Group -> GameState -> STM ()
+changeGameState :: Group -> GameState -> CSTM r ()
 changeGameState Group{..} gst = do
     game <- readTVar groupGameState
     writeTVar groupGameState game { gameState = gst }
 
-getGameState :: Group -> STM GameState
+getGameState :: Group -> CSTM r GameState
 getGameState Group{..} = do
     game <- readTVar groupGameState
     return $ gameState game

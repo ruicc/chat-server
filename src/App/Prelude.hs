@@ -3,8 +3,8 @@ module App.Prelude
     , module Control.Applicative
     , module Control.Monad
 --    , module Control.Concurrent
-    , module Control.Concurrent.STM
-    , module Control.Concurrent.Async
+--    , module Control.Concurrent.STM
+--    , module Control.Concurrent.Async
 --    , module Control.Exception
     , module Data.Monoid
     -- * ShortByteString
@@ -15,9 +15,8 @@ module App.Prelude
     -- * System.IO
     , putStr, putStrLn
     , hPutStr, hPutStrLn, hGetLine
-    , IO.Handle, IO.hFlush, IO.hClose
-    , IO.hSetBuffering
-    , IO.BufferMode(..)
+    , IO.Handle , IO.BufferMode(..)
+    , hFlush, hClose , hSetBuffering
     , words, rstrip
     , readInt
     -- * Conversion between Text and ShortByteString
@@ -31,8 +30,8 @@ import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.IO.Class
 --import           Control.Concurrent
-import           Control.Concurrent.STM
-import           Control.Concurrent.Async
+--import           Control.Concurrent.STM
+--import           Control.Concurrent.Async
 --import           Control.Exception hiding (mask, catch)
 
 import           Data.Monoid
@@ -45,6 +44,7 @@ import qualified Data.Text as T
 import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
 
 import qualified System.IO as IO
+import           Concurrent
 
 expr :: Show a => a -> ShortByteString
 expr = toShort . B.Char.pack . P.show
@@ -62,7 +62,18 @@ hPutStrLn :: IO.Handle -> ShortByteString -> IO ()
 hPutStrLn hdl sb = B.Char.hPutStrLn hdl (fromShort sb)
 
 hGetLine :: IO.Handle -> IO ShortByteString
-hGetLine hdl = toShort <$> B.Char.hGetLine hdl
+hGetLine hdl = toShort <$> (B.Char.hGetLine hdl)
+
+hFlush :: IO.Handle -> IO ()
+hFlush = IO.hFlush
+
+hClose :: IO.Handle -> IO ()
+hClose = IO.hClose
+
+hSetBuffering :: IO.Handle -> IO.BufferMode -> IO ()
+hSetBuffering h bm = IO.hSetBuffering h bm
+
+
 
 words :: ShortByteString -> [ShortByteString]
 words sb = toShort <$> (B.Char.words $ fromShort $ sb)

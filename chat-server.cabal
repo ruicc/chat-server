@@ -42,7 +42,7 @@ executable server
     , RecordWildCards
     , DeriveDataTypeable
     , RankNTypes
-    , ImpredicativeTypes
+    , TypeFamilies
   build-depends:
       base >= 4.7 && <4.8
     , async
@@ -88,8 +88,9 @@ executable client
     , async
     , stm
     , transformers
-    , aeson
+    , mtl
 
+    , aeson
     , containers
     , text
     , bytestring
