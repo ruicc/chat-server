@@ -14,11 +14,12 @@ import           System.Mem.Weak
 
 
 type ThreadId = Conc.ThreadId
+
 type CIO r a = ContT r IO a
+
 type CSTM r a = ContT r S.STM a
 
---type Concurrent a = CIO () a
---type ConcurrentSTM a = ContT () S.STM a
+type Concurrent a = CIO () a
 
 runCIO :: (a -> IO r) -> CIO r a -> IO r
 runCIO k action = runContT action k
@@ -32,8 +33,8 @@ atomically k action = liftIO $ S.atomically $ runCSTM k action
 atomically_ :: CSTM r' r' -> CIO r r'
 atomically_ = atomically return
 
---runConcurrent :: Concurrent a -> IO ()
---runConcurrent action = runCIO (const $ return ()) action
+runConcurrent :: Concurrent a -> IO ()
+runConcurrent action = runCIO (const $ return ()) action
 
 runSTM :: S.STM a -> CIO r a
 runSTM = liftIO . S.atomically
