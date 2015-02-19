@@ -2,6 +2,8 @@ module Log where
 
 import           App.Prelude
 import qualified Data.ByteString as B
+import           Control.Concurrent
+import           Control.Exception
 
 
 type LogChan = TChan ShortByteString

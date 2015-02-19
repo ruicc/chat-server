@@ -1,38 +1,40 @@
 module GameController (spawnControlThread) where
 
-import           App.Prelude
+import           App.Prelude as P
+--import qualified Control.Concurrent as Conc
 import qualified Log
 import           Types
+import           Concurrent
 
-spawnControlThread :: Server -> Group -> IO ()
+spawnControlThread :: Server -> Group -> Concurrent ()
 spawnControlThread srv@Server{..} gr@Group{..} = do
-    void $ forkIO $ do
+    void $ forkC $ do
         threadDelay $ 1 * 1000 * 1000
 
         mask $ \ restore -> do
             tid <- myThreadId
-            atomically $ do
+            runSTM $ do
                 sendBroadcast gr (Command "!begin")
                 putTMVar groupGameController tid
                 changeGameState gr Playing
-            logger $ "Group<" <> expr groupId <> "> Game begins!"
+            liftIO $ logger $ "Group<" <> expr groupId <> "> Game begins!"
 
             restore (playGame srv gr) `catch` \ (e :: SomeException) -> do
                 -- Cleanup
-                onRemove <- atomically $ do
+                onRemove <- runSTM $ do
                     changeGameState gr GroupDeleted
                     deleteGroup srv gr
-                onRemove
-                errorCollector e
-                logger $ "An Error occured on playing!"
+                liftIO onRemove
+                liftIO $ errorCollector e
+                liftIO $ logger $ "An Error occured on playing!"
 
-playGame :: Server -> Group -> IO ()
+playGame :: Server -> Group -> Concurrent ()
 playGame srv@Server{..} gr@Group{..} = do
 
     threadDelay $ groupPlayTime * 1000 * 1000
-    onRemove <- atomically $ do
+    onRemove <- runSTM $ do
         sendBroadcast gr (Command "!finish")
         changeGameState gr GroupDeleted
         deleteGroup srv gr
-    onRemove
-    logger $ "Group<" <> expr groupId <> "> Game finished!"
+    liftIO onRemove
+    liftIO $ logger $ "Group<" <> expr groupId <> "> Game finished!"

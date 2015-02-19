@@ -1,12 +1,14 @@
 module Types where
 
-import App.Prelude
+import App.Prelude as P
 
 import qualified Data.IntMap as IM
 import qualified Data.Unique as Uniq
+import qualified Control.Concurrent as Conc
 
 import qualified Log as Log
 import           Exception
+import           Concurrent
 
 ------------------------------------------------------------------------------------------
 -- | Types
@@ -66,8 +68,8 @@ data GameState = Waiting | BeforePlay | Playing | Result | GroupDeleted
 ------------------------------------------------------------------------------------------
 -- | Server
 
-newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> IO Server
-newServer logCh statCh erCh = do
+newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> Concurrent Server
+newServer logCh statCh erCh = liftIO $ do
     let
 --        logger str = return ()
         logger str = atomically $ writeTChan logCh str
@@ -123,6 +125,7 @@ createGroup Server{..} gid name capacity playTime ts timeout = do
     return gr
 
 -- FIXME: basic operation and high-level operation should be separated..
+-- TODO: STM (Concurrent ())
 deleteGroup :: Server -> Group -> STM (IO ())
 deleteGroup srv@Server{..} gr@Group{..} = do
     members :: [(ClientId, Client)]
@@ -132,26 +135,26 @@ deleteGroup srv@Server{..} gr@Group{..} = do
 
     tid <- readTMVar groupCanceler
 
-    return $ do
+    return $ do -- IO
         forM_ members $ \ (cid, Client{..}) -> do
-            throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
+            Conc.throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
 
         -- Killing the canceler thread must be done at last
         -- so that the canceler thread can call deleteGroup.
-        killThread tid
+        Conc.killThread tid
 
 ------------------------------------------------------------------------------------------
 -- | Client
 
-newClient :: Handle -> IO Client -- STM???
+newClient :: Handle -> Concurrent Client -- STM???
                                  --    -> No. Client is not shared value.
                                  --    -> Client is shared within Server and Group, but STM isn't required.
-newClient hdl = do
+newClient hdl = liftIO $ do
     cid :: Int
         <- Uniq.hashUnique <$> Uniq.newUnique
     ch :: TChan Message
         <- newTChanIO
-    tid <- myThreadId
+    tid <- Conc.myThreadId
     return $ Client
         { clientId = cid
         , clientHandle = hdl
@@ -159,15 +162,15 @@ newClient hdl = do
         , clientThreadId = tid
         }
 
-clientGet :: Server -> Client -> IO ShortByteString
-clientGet Server{..} Client{..} = do
+clientGet :: Server -> Client -> Concurrent ShortByteString
+clientGet Server{..} Client{..} = liftIO $ do
     str <- rstrip <$> hGetLine clientHandle
     hFlush clientHandle
 --    logger $ "(raw) " <> str
     return str
 
-clientPut :: Client -> ShortByteString -> IO ()
-clientPut Client{..} str = do
+clientPut :: Client -> ShortByteString -> Concurrent ()
+clientPut Client{..} str = liftIO $ do
     hPutStr clientHandle str
     hFlush clientHandle
 
@@ -198,8 +201,8 @@ getHistory :: Group -> STM [Message]
 getHistory Group{..} = readTVar groupHistory
 
 
-output :: Client -> Message -> IO ()
-output Client{..} msg = do
+output :: Client -> Message -> Concurrent ()
+output Client{..} msg = liftIO $ do
     let
         out' (Command _) = return ()
         out' (Broadcast cid str) = hPutStrLn clientHandle $ "Client<" <> expr cid <> "> : " <> str
@@ -217,14 +220,14 @@ getClient cid Group{..} = do
     return $ IM.lookup cid clientMap
 
 
-cancelWaiting :: Server -> Group -> IO ()
-cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically $ do
+cancelWaiting :: Server -> Group -> Concurrent ()
+cancelWaiting srv@Server{..} gr@Group{..} = liftIO $ join $ atomically $ do -- STM
     -- Check GameState
     gameSt <- gameState <$> readTVar groupGameState
     case gameSt of
         Waiting -> do
             onRemove <- deleteGroup srv gr
-            return $ do
+            return $ do -- IO
                 onRemove
                 logger $ "Canceler removed Group<" <> expr groupId <> ">."
 

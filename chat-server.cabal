@@ -30,6 +30,7 @@ executable server
     Main.hs
   other-modules:
       Chat, Log, Types, Server, Utils, Exception
+    , Concurrent
     , App.Prelude
     , App.Time
     , App.Config
@@ -40,11 +41,14 @@ executable server
     , OverloadedStrings
     , RecordWildCards
     , DeriveDataTypeable
+    , RankNTypes
+    , ImpredicativeTypes
   build-depends:
       base >= 4.7 && <4.8
     , async
     , stm
     , transformers
+    , mtl
 
     , containers
     , text

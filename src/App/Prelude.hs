@@ -2,10 +2,10 @@ module App.Prelude
     ( module P
     , module Control.Applicative
     , module Control.Monad
-    , module Control.Concurrent
+--    , module Control.Concurrent
     , module Control.Concurrent.STM
     , module Control.Concurrent.Async
-    , module Control.Exception
+--    , module Control.Exception
     , module Data.Monoid
     -- * ShortByteString
     , ShortByteString, toShort, fromShort
@@ -22,16 +22,18 @@ module App.Prelude
     , readInt
     -- * Conversion between Text and ShortByteString
     , toText, fromText
+    , liftIO
     )
     where
 
 import           Prelude as P hiding (log, lookup, putStrLn, putStr, words, null)
 import           Control.Applicative
 import           Control.Monad
-import           Control.Concurrent
+import           Control.Monad.IO.Class
+--import           Control.Concurrent
 import           Control.Concurrent.STM
 import           Control.Concurrent.Async
-import           Control.Exception
+--import           Control.Exception hiding (mask, catch)
 
 import           Data.Monoid
 import           Data.Char (isSpace)
