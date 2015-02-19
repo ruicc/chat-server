@@ -8,12 +8,12 @@ import Control.Monad.Cont
 import qualified Control.Exception as E
 import System.IO
 import Data.Monoid
-import Concurrent2
+import Concurrent
 
 main :: IO ()
 main = void $ runCIO return $ do
 --    path <- liftIO $ getLine
-    let path = "core.dump"
+    let path = "LICENSE"
 
     hdl <- liftIO $ openFile path ReadMode
 
@@ -42,14 +42,14 @@ main = void $ runCIO return $ do
             _ <- errorOccur str `onException` (liftIO $ putStrLn "Err: onException 1")
             return ()
 
-    tid <- forkFinally example1 errorhandler
+    _ <- forkFinally example1 errorhandler
 
 --    liftIO $ putStrLn $ "Exit string: " <> exitStr
 
 
     tv :: TVar Int <- newTVarCIO 0
 
-    forkC_ $ do
+    _ <- fork_ $ do
         let
             loop = do
                 atomically_ $ modifyTVar' tv succ
@@ -74,7 +74,7 @@ dosomething hdl = do
 
 errorOccur :: String -> CIO r String
 errorOccur str = do
-    _ <- throwC $ E.ErrorCall "Heyhey, error Occured"
+    _ <- throwCIO $ E.ErrorCall "Heyhey, error occured"
     liftIO $ putStrLn str
     return str
 
