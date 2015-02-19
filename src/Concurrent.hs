@@ -1,11 +1,12 @@
 module Concurrent where
 
 
---import           Prelude as P
+import           Prelude as P
 --import           Control.Applicative
 import           Control.Monad.Cont
 import qualified Control.Concurrent as Conc
 import qualified Control.Concurrent.STM as S
+import qualified Control.Concurrent.Async as As
 import qualified Control.Exception as E
 import           Control.Exception (Exception(..))
 import           System.Mem.Weak
@@ -219,6 +220,7 @@ unGetTChan = (liftSTM .) . S.unGetTChan
 isEmptyTChan :: TChan a -> CSTM r Bool
 isEmptyTChan = liftSTM . S.isEmptyTChan
 
+
 -- | TMVar
 
 newTMVar :: a -> CSTM r (TMVar a)
@@ -259,3 +261,20 @@ isEmptyTMVar = liftSTM . S.isEmptyTMVar
 
 --mkWeakTMVar :: TMVar a -> CIO () () -> CIO r (Weak (TMVar a))
 --mkWeakTMVar tmv finalizer = liftIO $ S.mkWeakTMVar tmv (runCIO return finalizer)
+
+
+-- | Async
+
+type Async = As.Async
+
+async :: CIO a a -> CIO r (As.Async a)
+async m = liftIO $ As.async (runCIO return m)
+
+wait :: Async a -> CIO r a 
+wait = liftIO . As.wait
+
+race :: CIO a a -> CIO b b -> CIO r (Either a b)
+race c1 c2 = liftIO $ As.race (runCIO return c1) (runCIO return c2)
+
+race_ :: CIO a a -> CIO b b -> CIO r ()
+race_ c1 c2 = liftIO $ As.race_ (runCIO return c1) (runCIO return c2)
