@@ -17,13 +17,17 @@ import           Concurrent
 
 runClientThread :: Server -> Handle -> Concurrent ()
 runClientThread srv@Server{..} hdl = do
-    let
-        showGroups :: Server -> Client -> Concurrent ()
-        showGroups srv cl = do
-            grs :: [(GroupId, Group)]
-                <- atomically_ $ getAllGroups srv
+    liftIO $ hSetBuffering hdl LineBuffering
+    cl <- initClient srv hdl
+    groupSelectRepl srv cl
 
-            clientPut cl $ "!groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
+
+showGroups :: Server -> Client -> Concurrent ()
+showGroups srv cl = do
+    grs :: [(GroupId, Group)]
+        <- atomically_ $ getAllGroups srv
+
+    clientPut cl $ "!groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
 --            clientPut cl $ mconcat
 --                [ "{\"rooms\":["
 --                , mconcat $ intersperse "," $ map (expr . fst) grs
@@ -33,106 +37,105 @@ runClientThread srv@Server{..} hdl = do
 --                , "\n"
 --                ]
 
-        getUserInput :: Client -> Concurrent ShortByteString
-        getUserInput cl = do
-            input :: ShortByteString
-                <- clientGet srv cl
+getUserInput :: Server -> Client -> Concurrent ShortByteString
+getUserInput srv cl = do
+    input :: ShortByteString
+        <- clientGet srv cl
 
---            logger $ "Group select: " <> expr input
-            return input
+--    logger $ "Group select: " <> expr input
+    return input
 
-        loop :: Client -> Concurrent ()
-        loop cl = do
+groupSelectRepl :: Server -> Client -> Concurrent ()
+groupSelectRepl srv cl = loop
+  where
+    loop = do
+        showGroups srv cl
+        input :: ShortByteString
+            <- getUserInput srv cl
 
-            showGroups srv cl
-            input :: ShortByteString
-                <- getUserInput cl
+        case words input of
+            ["/quit"] -> throwCIO QuitGame
 
-            case words input of
-                ["/quit"] -> throwCIO QuitGame
+            ["/new", name, capacity', timeout'] -> do
+                let
+                    playTime = 3 -- TODO: User should be able to specify it.
 
-                ["/new", name, capacity', timeout'] -> do
-                    let
-                        playTime = 3 -- TODO: User should be able to specify it.
+                case (readInt capacity', readInt timeout') of
+                    (Just (capacity, _), Just (timeout, _)) -> do
+                        gid <- Uniq.hashUnique <$> liftIO Uniq.newUnique
+                        ts <- liftIO Time.getUnixTimeAsInt
 
-                    case (readInt capacity', readInt timeout') of
-                        (Just (capacity, _), Just (timeout, _)) -> do
-                            gid <- Uniq.hashUnique <$> liftIO Uniq.newUnique
-                            ts <- liftIO Time.getUnixTimeAsInt
+                        mask $ \restore -> do
+                            mNewGroup :: Maybe (Group, Concurrent ())
+                                <- join $ atomically_ $ getGroupAndJoin
+                                    srv
+                                    cl
+                                    (Just <$> createGroup srv gid name capacity playTime ts timeout)
+                            case mNewGroup of
+                                Just (gr, onJoin) -> do
+                                    -- FIXME: spawnTimeoutCanceler may throw exception..
+                                    restore (spawnTimeoutCanceler srv gr >> notifyClient srv gr cl onJoin)
+                                            -- Catch any exception defined by ClientException.
+                                            `catch` (\ (_ :: ClientException) -> return ())
+                                            -- Clean up
+                                            `finally` (removeClient srv cl gr)
+                                Nothing -> return () -- TODO: エラー理由
+                        loop
 
-                            mask $ \restore -> do
-                                mNewGroup :: Maybe (Group, Concurrent ())
-                                    <- join $ atomically_ $ getGroupAndJoin
-                                        cl
-                                        (Just <$> createGroup srv gid name capacity playTime ts timeout)
-                                case mNewGroup of
-                                    Just (gr, onJoin) -> do
-                                        -- FIXME: spawnTimeoutCanceler may throw exception..
-                                        restore (spawnTimeoutCanceler srv gr >> notifyClient srv gr cl onJoin)
-                                                -- Catch any exception defined by ClientException.
-                                                `catch` (\ (_ :: ClientException) -> return ())
-                                                -- Clean up
-                                                `finally` (removeClient srv cl gr)
-                                    Nothing -> return () -- TODO: エラー理由
-                            loop cl
+                    _   -> do
+                        loop
 
-                        _   -> do
-                            loop cl
+            ["/join", gid'] -> do
 
-                ["/join", gid'] -> do
+                case readInt gid' of
+                    Just (gid, _) -> do
+                        mask $ \restore -> do
+                            mNewGroup :: Maybe (Group, Concurrent ())
+                                <- join $ atomically_ $ getGroupAndJoin
+                                    srv
+                                    cl
+                                    (getGroup srv gid)
+                            case mNewGroup of
+                                Just (gr, onJoin) -> do
+                                    restore (notifyClient srv gr cl onJoin)
+                                            -- Catch any exception defined by ClientException.
+                                            `catch` (\ (_ :: ClientException) -> return ())
+                                            -- Clean up
+                                            `finally` (removeClient srv cl gr)
+                                Nothing -> return () -- TODO: エラー理由
+                        loop
 
-                    case readInt gid' of
-                        Just (gid, _) -> do
-                            mask $ \restore -> do
-                                mNewGroup :: Maybe (Group, Concurrent ())
-                                    <- join $ atomically_ $ getGroupAndJoin
-                                        cl
-                                        (getGroup srv gid)
-                                case mNewGroup of
-                                    Just (gr, onJoin) -> do
-                                        restore (notifyClient srv gr cl onJoin)
-                                                -- Catch any exception defined by ClientException.
-                                                `catch` (\ (_ :: ClientException) -> return ())
-                                                -- Clean up
-                                                `finally` (removeClient srv cl gr)
-                                    Nothing -> return () -- TODO: エラー理由
-                            loop cl
+                    Nothing -> do
+                        loop
+            _ -> do
+                clientPut cl $ "!status \"group-select\"\n"
+                loop
 
-                        Nothing -> do
-                            loop cl
-                _ -> do
-                    clientPut cl $ "!status \"group-select\"\n"
-                    loop cl
+-- This signature might be a bit scary, but it just combines 2 actions,
+-- getGr and addClient.
+getGroupAndJoin
+    :: Server
+    -> Client
+    -> CSTM r (Maybe Group)
+    -> CSTM r (Concurrent (Maybe (Group, Concurrent ())))
+getGroupAndJoin srv cl getGr = do -- CSTM
 
-        -- This signature might be a bit scary, but it just combines 2 actions,
-        -- getGr and addClient.
-        getGroupAndJoin
---            :: (r ~ Concurrent (Maybe (Group, Concurrent ())))
-            :: Client
-            -> CSTM r (Maybe Group)
-            -> CSTM r (Concurrent (Maybe (Group, Concurrent ())))
-        getGroupAndJoin cl getGr = do -- CSTM
+    -- NOTICE: Getting a group might fail due to removing group.
+    mgr :: Maybe Group <- getGr
+    case mgr of
+        Just gr -> do -- CSTM
+            -- NOTICE: Joining a group might fail due to room capacity.
+            mOnJoin :: Maybe (Concurrent ())
+                <- addClient srv cl gr
+            case mOnJoin of
+                -- OK, User joined.
+                Just onJoin -> return $ return $ Just (gr, onJoin)
+                -- Room capacity is full.
+                Nothing -> return $ return $ Nothing
 
-            -- NOTICE: Getting a group might fail due to removing group.
-            mgr :: Maybe Group <- getGr
-            case mgr of
-                Just gr -> do -- CSTM
-                    -- NOTICE: Joining a group might fail due to room capacity.
-                    mOnJoin :: Maybe (Concurrent ())
-                        <- addClient srv cl gr
-                    case mOnJoin of
-                        -- OK, User joined.
-                        Just onJoin -> return $ return $ Just (gr, onJoin)
-                        -- Room capacity is full.
-                        Nothing -> return $ return $ Nothing
-
-                Nothing -> do
-                    -- Getting group failed..
-                    return $ return $ Nothing
-
-    liftIO $ hSetBuffering hdl LineBuffering
-    cl <- initClient srv hdl
-    loop cl
+        Nothing -> do
+            -- Getting group failed..
+            return $ return $ Nothing
 
 
 initClient :: Server -> Handle -> Concurrent Client

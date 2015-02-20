@@ -71,8 +71,8 @@ data GameState = Waiting | BeforePlay | Playing | Result | GroupDeleted
 newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> IO Server
 newServer logCh statCh erCh = runCIO return $ do
     let
---        logger str = return ()
-        logger str = atomically_ $ writeTChan logCh str
+        logger str = return ()
+--        logger str = atomically_ $ writeTChan logCh str
         tick ev = atomically_ $ writeTChan statCh ev
         errorCollector e = atomically_ $ writeTChan erCh e
     gs <- newTVarCIO IM.empty
