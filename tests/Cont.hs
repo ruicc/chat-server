@@ -49,13 +49,7 @@ main = void $ runCIO return $ do
 
     tv :: TVar Int <- newTVarCIO 0
 
-    _ <- fork_ $ do
-        let
-            loop = do
-                atomically_ $ modifyTVar' tv succ
-                threadDelay $ 100 * 1000
-                loop
-        loop
+    _ <- fork_ $ loop tv
 
     threadDelay $ 1 * 1000 * 1000
 
@@ -67,6 +61,12 @@ main = void $ runCIO return $ do
     liftIO $ putStrLn $ "fork & STM : " <> show n
 
 
+loop tv = go
+  where
+    go = do
+        atomically_ $ modifyTVar' tv succ
+        threadDelay $ 100 * 1000
+        go
 
 dosomething :: Handle -> CIO r String
 dosomething hdl = do
