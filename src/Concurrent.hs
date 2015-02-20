@@ -24,24 +24,31 @@ type Concurrent a = CIO () a
 
 runCIO :: (a -> IO r) -> CIO r a -> IO r
 runCIO k action = runContT action k
+{-# INLINE runCIO #-}
 
 runCSTM :: (a -> S.STM r) -> CSTM r a -> S.STM r
 runCSTM k action = runContT action k
+{-# INLINE runCSTM #-}
 
 atomically :: (a -> S.STM r') -> CSTM r' a -> CIO r r'
 atomically k action = liftIO $ S.atomically $ runCSTM k action
+{-# INLINE atomically #-}
 
 atomically_ :: CSTM r' r' -> CIO r r'
 atomically_ = atomically return
+{-# INLINE atomically_ #-}
 
 runConcurrent :: Concurrent a -> IO ()
 runConcurrent action = runCIO (const $ return ()) action
+{-# INLINE runConcurrent #-}
 
 runSTM :: S.STM a -> CIO r a
 runSTM = liftIO . S.atomically
+{-# INLINE runSTM #-}
 
 liftSTM :: S.STM a -> CSTM r a
 liftSTM m = ContT (m >>=)
+{-# INLINE liftSTM #-}
 
 
 ------------------------------------------------------------------------------------------
@@ -157,107 +164,140 @@ catchSTM action handler =
 
 newTVar :: a -> CSTM r (TVar a)
 newTVar = liftSTM . S.newTVar
+{-# INLINE newTVar #-}
 
 newTVarCIO :: a -> CIO r (TVar a)
 newTVarCIO = liftIO . S.newTVarIO
+{-# INLINE newTVarCIO #-}
 
 readTVar :: TVar a -> CSTM r a
 readTVar = liftSTM . S.readTVar
+{-# INLINE readTVar #-}
 
 readTVarCIO :: TVar a -> CIO r a
 readTVarCIO = liftIO . S.readTVarIO
+{-# INLINE readTVarCIO #-}
 
 writeTVar :: TVar a -> a -> CSTM r ()
 writeTVar = (liftSTM .) . S.writeTVar
+{-# INLINE writeTVar #-}
 
 modifyTVar :: TVar a -> (a -> a) -> CSTM r ()
 modifyTVar = (liftSTM .) . S.modifyTVar
+{-# INLINE modifyTVar #-}
 
 modifyTVar' :: TVar a -> (a -> a) -> CSTM r ()
 modifyTVar' = (liftSTM .) . S.modifyTVar'
+{-# INLINE modifyTVar' #-}
 
 swapTVar :: TVar a -> a -> CSTM r a
 swapTVar = (liftSTM .) . S.swapTVar
+{-# INLINE swapTVar #-}
 
 registerDelay :: Int -> CIO r (TVar Bool)
 registerDelay = liftIO . S.registerDelay
+{-# INLINE registerDelay #-}
 
 mkWeakTVar :: TVar a -> CIO () () -> CIO r (Weak (TVar a))
 mkWeakTVar tv finalizer = liftIO $ S.mkWeakTVar tv (runCIO return finalizer)
+{-# INLINE mkWeakTVar #-}
 
 -- | TChan
 
 newTChan :: CSTM r (TChan a)
 newTChan = liftSTM S.newTChan
+{-# INLINE newTChan #-}
 
 newTChanCIO :: CIO r (TChan a)
 newTChanCIO = liftIO S.newTChanIO
+{-# INLINE newTChanCIO #-}
 
 newBroadcastTChan :: CSTM r (TChan a)
 newBroadcastTChan = liftSTM S.newBroadcastTChan
+{-# INLINE newBroadcastTChan #-}
 
 dupTChan :: TChan a -> CSTM r (TChan a)
 dupTChan = liftSTM . S.dupTChan
+{-# INLINE dupTChan #-}
 
 cloneTChan :: TChan a -> CSTM r (TChan a)
 cloneTChan = liftSTM . S.cloneTChan
+{-# INLINE cloneTChan #-}
 
 readTChan :: TChan a -> CSTM r a
 readTChan = liftSTM . S.readTChan
+{-# INLINE readTChan #-}
 
 tryReadTChan :: TChan a -> CSTM r (Maybe a)
 tryReadTChan = liftSTM . S.tryReadTChan
+{-# INLINE tryReadTChan #-}
 
 tryPeekTChan :: TChan a -> CSTM r (Maybe a)
 tryPeekTChan = liftSTM . S.tryPeekTChan
+{-# INLINE tryPeekTChan #-}
 
 writeTChan :: TChan a -> a -> CSTM r ()
 writeTChan = (liftSTM .) . S.writeTChan
+{-# INLINE writeTChan #-}
 
 unGetTChan :: TChan a -> a -> CSTM r ()
 unGetTChan = (liftSTM .) . S.unGetTChan
+{-# INLINE unGetTChan #-}
 
 isEmptyTChan :: TChan a -> CSTM r Bool
 isEmptyTChan = liftSTM . S.isEmptyTChan
+{-# INLINE isEmptyTChan #-}
 
 
 -- | TMVar
 
 newTMVar :: a -> CSTM r (TMVar a)
 newTMVar = liftSTM . S.newTMVar
+{-# INLINE newTMVar #-}
 
 newEmptyTMVar :: CSTM r (TMVar a)
 newEmptyTMVar = liftSTM S.newEmptyTMVar
+{-# INLINE newEmptyTMVar #-}
 
 newTMVarCIO :: a -> CIO r (TMVar a) 
 newTMVarCIO = liftIO . S.newTMVarIO
+{-# INLINE newTMVarCIO #-}
 
 newEmptyTMVarCIO :: CIO r (TMVar a) 
 newEmptyTMVarCIO = liftIO S.newEmptyTMVarIO
+{-# INLINE newEmptyTMVarCIO #-}
 
 takeTMVar :: TMVar a -> CSTM r a
 takeTMVar = liftSTM . S.takeTMVar
+{-# INLINE takeTMVar #-}
 
 putTMVar :: TMVar a -> a -> CSTM r ()
 putTMVar = (liftSTM .) . S.putTMVar
+{-# INLINE putTMVar #-}
 
 readTMVar :: TMVar a -> CSTM r a 
 readTMVar = liftSTM . S.readTMVar
+{-# INLINE readTMVar #-}
 
 tryReadTMVar :: TMVar a -> CSTM r (Maybe a)
 tryReadTMVar = liftSTM . S.tryReadTMVar
+{-# INLINE tryReadTMVar #-}
 
 swapTMVar :: TMVar a -> a -> CSTM r a
 swapTMVar = (liftSTM .) . S.swapTMVar
+{-# INLINE swapTMVar #-}
 
 tryTakeTMVar :: TMVar a -> CSTM r (Maybe a)
 tryTakeTMVar = liftSTM . S.tryTakeTMVar
+{-# INLINE tryTakeTMVar #-}
 
 tryPutTMVar :: TMVar a -> a -> CSTM r Bool
 tryPutTMVar = (liftSTM .) . S.tryPutTMVar
+{-# INLINE tryPutTMVar #-}
 
 isEmptyTMVar :: TMVar a -> CSTM r Bool
 isEmptyTMVar = liftSTM . S.isEmptyTMVar
+{-# INLINE isEmptyTMVar #-}
 
 --mkWeakTMVar :: TMVar a -> CIO () () -> CIO r (Weak (TMVar a))
 --mkWeakTMVar tmv finalizer = liftIO $ S.mkWeakTMVar tmv (runCIO return finalizer)
@@ -269,12 +309,16 @@ type Async = As.Async
 
 async :: CIO a a -> CIO r (As.Async a)
 async m = liftIO $ As.async (runCIO return m)
+{-# INLINE async #-}
 
 wait :: Async a -> CIO r a 
 wait = liftIO . As.wait
+{-# INLINE wait #-}
 
 race :: CIO a a -> CIO b b -> CIO r (Either a b)
 race c1 c2 = liftIO $ As.race (runCIO return c1) (runCIO return c2)
+{-# INLINE race #-}
 
 race_ :: CIO a a -> CIO b b -> CIO r ()
 race_ c1 c2 = liftIO $ As.race_ (runCIO return c1) (runCIO return c2)
+{-# INLINE race_ #-}
