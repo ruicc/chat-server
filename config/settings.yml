@@ -8,4 +8,7 @@ ekg:
     port: 3001
 
 client:
-    spawn_threads: 2000
+    spawn_threads: 1000 # (10.7%, 13sec)
+#    spawn_threads: 2000 # (23%, 16sec) (27%, 16sec)
+#    spawn_threads: 3000 # (43%, 24sec) (46%, 24sec)
+#    spawn_threads: 4000 # (57%? 33sec)

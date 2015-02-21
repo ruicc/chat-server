@@ -57,6 +57,11 @@ data Message
     | Broadcast ClientId ShortByteString
     | Command ShortByteString
     deriving Show
+data ClientMessage
+    = Quit
+    | NewGroup GroupName GroupCapacity PlayTime Timeout
+    | JoinGroup GroupId
+    deriving Show
 data Game = Game
     { gameState :: GameState
     , deadClients :: [Client]
@@ -71,8 +76,11 @@ data GameState = Waiting | BeforePlay | Playing | Result | GroupDeleted
 newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> IO Server
 newServer logCh statCh erCh = runCIO return $ do
     let
+#if DEVELOPMENT
+        logger str = atomically_ $ writeTChan logCh str
+#else
         logger str = return ()
---        logger str = atomically_ $ writeTChan logCh str
+#endif
         tick ev = atomically_ $ writeTChan statCh ev
         errorCollector e = atomically_ $ writeTChan erCh e
     gs <- newTVarCIO IM.empty
@@ -112,17 +120,19 @@ getGroup :: Server -> GroupId -> CSTM r (Maybe Group)
 getGroup Server{..} gid = do
     groupMap <- readTVar serverGroups
     return $ IM.lookup gid groupMap
+--{-# NOINLINE getGroup #-}
 
 getAllGroups :: Server -> CSTM r [(GroupId, Group)]
 getAllGroups Server{..} = do
     groupMap <- readTVar serverGroups
     return $ IM.toList groupMap
 
-createGroup :: Server -> GroupId -> ShortByteString -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> CSTM r Group
+createGroup :: Server -> GroupId -> GroupName -> GroupCapacity -> PlayTime -> Timestamp -> Timeout -> CSTM Group Group
 createGroup Server{..} gid name capacity playTime ts timeout = do
     gr <- newGroup gid name capacity playTime ts timeout
     modifyTVar' serverGroups $ IM.insert (groupId gr) gr
     return gr
+--{-# NOINLINE createGroup #-}
 
 -- FIXME: basic operation and high-level operation should be separated..
 -- TODO: CSTM r (Concurrent ())
@@ -142,6 +152,7 @@ deleteGroup srv@Server{..} gr@Group{..} = do
         -- Killing the canceler thread must be done at last
         -- so that the canceler thread can call deleteGroup.
         killThread tid
+--{-# NOINLINE deleteGroup #-}
 
 ------------------------------------------------------------------------------------------
 -- | Client
@@ -166,13 +177,15 @@ clientGet :: Server -> Client -> Concurrent ShortByteString
 clientGet Server{..} Client{..} = do
     str <- rstrip <$> (liftIO $ hGetLine clientHandle)
     liftIO $ hFlush clientHandle
---    logger $ "(raw) " <> str
+    logger $ "(raw) " <> str
     return str
+--{-# NOINLINE clientGet #-}
 
 clientPut :: Client -> ShortByteString -> Concurrent ()
 clientPut Client{..} str = do
     liftIO $ hPutStr clientHandle str
     liftIO $ hFlush clientHandle
+--{-# NOINLINE clientPut #-}
 
 
 ------------------------------------------------------------------------------------------
@@ -187,6 +200,7 @@ sendBroadcast :: Group -> Message -> CSTM r ()
 sendBroadcast gr@Group{..} msg = do
     addHistory gr msg
     writeTChan groupBroadcastChan msg
+--{-# NOINLINE sendBroadcast #-}
 
 
 addHistory :: Group -> Message -> CSTM r ()
@@ -218,6 +232,7 @@ getClient :: ClientId -> Group -> CSTM r (Maybe Client)
 getClient cid Group{..} = do
     clientMap <- readTVar groupMembers
     return $ IM.lookup cid clientMap
+--{-# NOINLINE getClient #-}
 
 
 cancelWaiting :: Server -> Group -> Concurrent ()
@@ -244,3 +259,6 @@ getGameState :: Group -> CSTM r GameState
 getGameState Group{..} = do
     game <- readTVar groupGameState
     return $ gameState game
+
+newUniqueInt :: IO Int
+newUniqueInt = Uniq.hashUnique <$> Uniq.newUnique

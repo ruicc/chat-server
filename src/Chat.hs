@@ -23,21 +23,23 @@ runChatServer port = withSocketsDo $ do
     printf "Listening on port %d\n" port
 
 
-    let
-        errorHandler :: Handle -> Either SomeException () -> Concurrent ()
-        errorHandler hdl (Left e) = do
-            errorCollector server e
-            liftIO $ hClose hdl
-        errorHandler hdl _ = do
-            liftIO $ hClose hdl
-
-        -- QuitGame can be thrown anywhere, anytime.
-        quitHandler :: QuitGame -> Concurrent ()
-        quitHandler QuitGame = tick server $ Log.ClientLeft
-
-        run hdl = runClientThread server hdl `catch` quitHandler
-
     forever $ runConcurrent $ do -- Concurrent
-        (hdl, _hostname, _portnumber) <- liftIO $ accept socket
---        printf "Accepted from %s\n" hostname
-        forkFinally (run hdl) (errorHandler hdl)
+        (hdl, hostname, _portnumber) <- liftIO $ accept socket
+        logger server $ "Accepted from " <> expr hostname <> "\n" 
+
+        forkFinally (run server hdl) (errorHandler server hdl)
+
+run server hdl = runClientThread server hdl `catch` quitHandler server
+
+errorHandler :: Server -> Handle -> Either SomeException () -> Concurrent ()
+errorHandler server hdl (Left e) = do
+    errorCollector server e
+    liftIO $ hClose hdl
+errorHandler server hdl _ = do
+    liftIO $ hClose hdl
+
+-- QuitGame can be thrown anywhere, anytime.
+quitHandler :: Server -> QuitGame -> Concurrent ()
+quitHandler srv@Server{..} QuitGame = do
+    logger "Client quit"
+    tick Log.ClientLeft

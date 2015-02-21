@@ -1,7 +1,7 @@
 make:
 	# Here write a command you want to execute frequently!
 
-#	cabal test cps -- --ghc-options="-O2 -ddump-prep -fforce-recomp --make -dsuppress-coercions" > core.cps
+	cabal build server -- --ghc-options="-O2 -ddump-prep -fforce-recomp --make -dsuppress-coercions" > core.server
 
 clean:
 	cabal clean

@@ -12,10 +12,10 @@ initialize hdl = do
         (Init cid) -> newClient cid hdl
         _ -> error "init error"
 
-createNewGroup :: Client -> ShortByteString -> Int -> Int -> IO Client
-createNewGroup cl@Client{..} name capacity timeout = do
+createNewGroup :: Client -> ShortByteString -> Int -> Int -> Int -> IO Client
+createNewGroup cl@Client{..} name capacity time timeout = do
     groups <- getMessage clientHandle
-    putSB clientHandle $ "/new " <> name <> " " <> expr capacity <> " " <> expr timeout
+    putSB clientHandle $ "/new " <> name <> " " <> expr capacity <> " " <> expr time <> " " <> expr timeout
 
     join <- getMessage clientHandle
     cl <- case join of

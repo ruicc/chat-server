@@ -17,8 +17,8 @@ main = do
 
     -- Ekg: access at http://localhost:3001 with browser or curl.
     -- curl -H "Accept: application/json" http://localhost:3001/
-    _ <- forkServer
-        (ekgHost ekgCnf)
-        (ekgPort ekgCnf)
+--    _ <- forkServer
+--        (ekgHost ekgCnf)
+--        (ekgPort ekgCnf)
 
     runChatServer (serverPort serverCnf)

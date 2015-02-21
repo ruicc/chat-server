@@ -1,4 +1,5 @@
 :set -XOverloadedStrings
+:set -DDEVELOPMENT
 import Control.Applicative as Ap
 import Control.Monad as Monad
 import Control.Monad.Cont as Cont

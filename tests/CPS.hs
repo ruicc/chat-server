@@ -14,12 +14,16 @@ main = void $ runCIO return $ do
 
     hdl <- liftIO $ openFile path ReadMode
 
-    liftIO $ putStrLn "a lot let"
-    main_alotlet hdl
-    liftIO $ putStrLn "few let"
-    main_fewlet hdl
+    main_bundle hdl
+
     threadDelay $ 500 * 1000
 
+main_bundle :: Handle -> CIO r ()
+main_bundle hdl = do
+--    liftIO $ putStrLn "few let"
+    main_fewlet hdl
+--    liftIO $ putStrLn "a lot let"
+    main_alotlet hdl
 
 main_fewlet :: Handle -> CIO r ()
 main_fewlet hdl = void $ forkFinally (example1 hdl) (\_ -> liftIO $ hClose hdl)
