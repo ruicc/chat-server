@@ -47,9 +47,9 @@ data Group = Group
     }
 data Server = Server
     { serverGroups :: TVar (IM.IntMap Group)
-    , logger :: ShortByteString -> Concurrent ()
-    , tick :: Log.AppEvent -> Concurrent ()
-    , errorCollector :: SomeException -> Concurrent ()
+    , logChan :: Log.LogChan
+    , statChan :: Log.StatChan
+    , errorChan :: Log.ErrorChan
     }
 data Message
     = Notice ShortByteString
@@ -76,17 +76,22 @@ data GameState = Waiting | BeforePlay | Playing | Result | GroupDeleted
 newServer :: Log.LogChan -> Log.StatChan -> Log.ErrorChan -> IO Server
 newServer logCh statCh erCh = runCIO return $ do
     let
-#if DEVELOPMENT
-        logger str = atomically_ $ writeTChan logCh str
-#else
-        logger str = return ()
-#endif
-        tick ev = atomically_ $ writeTChan statCh ev
-        errorCollector e = atomically_ $ writeTChan erCh e
     gs <- newTVarCIO IM.empty
 
-    return $ Server gs logger tick errorCollector
+    return $ Server gs logCh statCh erCh
 
+logger :: Server -> ShortByteString -> CIO r ()
+#if DEVELOPMENT
+logger Server{..} sb = atomically_ $ writeTChan logChan sb
+#else
+logger Server{..} sb = return ()
+#endif
+
+tick :: Server -> Log.AppEvent -> CIO r ()
+tick Server{..} ev = atomically_ $ writeTChan statChan ev
+
+errorCollector :: Server -> SomeException -> CIO r ()
+errorCollector Server{..} e = atomically_ $ writeTChan errorChan e
 
 ------------------------------------------------------------------------------------------
 -- | Group
@@ -157,7 +162,7 @@ deleteGroup srv@Server{..} gr@Group{..} = do
 ------------------------------------------------------------------------------------------
 -- | Client
 
-newClient :: Handle -> Concurrent Client -- CSTM r???
+newClient :: Handle -> CIO r Client -- CSTM r???
                                  --    -> No. Client is not shared value.
                                  --    -> Client is shared within Server and Group, but CSTM r isn't required.
 newClient hdl = do
@@ -173,18 +178,19 @@ newClient hdl = do
         , clientThreadId = tid
         }
 
-clientGet :: Server -> Client -> Concurrent ShortByteString
-clientGet Server{..} Client{..} = do
-    str <- rstrip <$> (liftIO $ hGetLine clientHandle)
-    liftIO $ hFlush clientHandle
-    logger $ "(raw) " <> str
+clientGet :: Server -> Client -> CIO r ShortByteString
+clientGet srv@Server{..} Client{..} = do
+    !str <- rstrip <$> (liftIO $ hGetLine clientHandle)
+    !() <- liftIO $ hFlush clientHandle
+    logger srv $ "(raw) " <> str
     return str
 --{-# NOINLINE clientGet #-}
 
-clientPut :: Client -> ShortByteString -> Concurrent ()
+clientPut :: Client -> ShortByteString -> CIO r ()
 clientPut Client{..} str = do
-    liftIO $ hPutStr clientHandle str
-    liftIO $ hFlush clientHandle
+    !() <- liftIO $ hPutStr clientHandle str
+    !() <- liftIO $ hFlush clientHandle
+    return ()
 --{-# NOINLINE clientPut #-}
 
 
@@ -215,7 +221,7 @@ getHistory :: Group -> CSTM r [Message]
 getHistory Group{..} = readTVar groupHistory
 
 
-output :: Client -> Message -> Concurrent ()
+output :: Client -> Message -> CIO r ()
 output Client{..} msg = do
     let
         out' (Command _) = return ()
@@ -235,7 +241,7 @@ getClient cid Group{..} = do
 --{-# NOINLINE getClient #-}
 
 
-cancelWaiting :: Server -> Group -> Concurrent ()
+cancelWaiting :: Server -> Group -> CIO () ()
 cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically_ $ do -- CSTM
     -- Check GameState
     gameSt <- gameState <$> readTVar groupGameState
@@ -244,10 +250,10 @@ cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically_ $ do -- CSTM
             onRemove <- deleteGroup srv gr
             return $ do -- CIO
                 onRemove
-                logger $ "Canceler removed Group<" <> expr groupId <> ">."
+                logger srv $ "Canceler removed Group<" <> expr groupId <> ">."
 
         _       -> return $ do
-            logger "Canceler fired, but do nothing"
+            logger srv $ "Canceler fired, but do nothing"
             return ()
 
 changeGameState :: Group -> GameState -> CSTM r ()

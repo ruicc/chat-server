@@ -27,13 +27,13 @@ spawnLogger erCh stCh logCh = do
 
         logger :: LogChan -> CIO r ()
         logger ch = forever $ do
-            str <- atomically_ $ do
+            !str <- atomically_ $ do
                 writeTChan stCh Logging
                 readTChan ch
             when (not $ null str) (liftIO $ putStrLn $ "Log: " <> str)
             return ()
 
-    _tid <- fork_ $ supervisor logCh
+    !_tid <- fork_ $ supervisor logCh
     return ()
 
 ------------------------------------------------------------------------------------------
@@ -117,7 +117,7 @@ spawnStatAggregator erCh stCh stat = do
 
         aggregator :: StatChan -> AppStat -> CIO r ()
         aggregator ch tsum = do
-            st <- atomically_ $ readTChan ch
+            !st <- atomically_ $ readTChan ch
             atomically_ $ aggregate tsum st
             aggregator ch tsum
 
@@ -130,7 +130,7 @@ spawnStatAggregator erCh stCh stat = do
         aggregate astat SystemError = modifyTVar' (systemErrors astat) succ
         aggregate astat Logging     = modifyTVar' (logging      astat) succ
 
-    _tid <- fork_ $ supervisor stCh stat
+    !_tid <- fork_ $ supervisor stCh stat
     return ()
 
 ------------------------------------------------------------------------------------------
@@ -153,11 +153,11 @@ spawnErrorCollector erCh stCh stat = do
 
         collector :: ErrorChan -> CIO r ()
         collector ch = forever $ do
-            err <- atomically_ $ readTChan ch
+            !err <- atomically_ $ readTChan ch
             liftIO $ putStrLn $ "Err: " <> expr err
             atomically_ $ writeTChan stCh SystemError
 
-    _tid <- fork_ $ supervisor erCh stat
+    !_tid <- fork_ $ supervisor erCh stat
     return ()
 
 ------------------------------------------------------------------------------------------
@@ -184,9 +184,9 @@ spawnCollectorThreads = runCIO return $ do
     spawnStatAggregator erCh stCh stat
     spawnLogger erCh stCh logCh
 
-    fork_ $ dummyLogSender logCh
+    !_tid <- fork_ $ dummyLogSender logCh
 
-    _tid2 <- fork_ $ outputRepeatedly stat
+    !_tid2 <- fork_ $ outputRepeatedly stat
     return (erCh, stCh, logCh)
 
 dummyLogSender logCh = do

@@ -29,6 +29,7 @@ runChatServer port = withSocketsDo $ do
 
         forkFinally (run server hdl) (errorHandler server hdl)
 
+run :: Server -> Handle -> Concurrent ()
 run server hdl = runClientThread server hdl `catch` quitHandler server
 
 errorHandler :: Server -> Handle -> Either SomeException () -> Concurrent ()
@@ -41,5 +42,5 @@ errorHandler server hdl _ = do
 -- QuitGame can be thrown anywhere, anytime.
 quitHandler :: Server -> QuitGame -> Concurrent ()
 quitHandler srv@Server{..} QuitGame = do
-    logger "Client quit"
-    tick Log.ClientLeft
+    logger srv "Client quit"
+    tick srv Log.ClientLeft

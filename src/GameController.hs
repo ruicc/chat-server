@@ -17,7 +17,7 @@ spawnControlThread srv@Server{..} gr@Group{..} = do
                 sendBroadcast gr (Command "!begin")
                 putTMVar groupGameController tid
                 changeGameState gr Playing
-            logger $ "Group<" <> expr groupId <> "> Game begins!"
+            logger srv $ "Group<" <> expr groupId <> "> Game begins!"
 
             restore (playGame srv gr) `catch` \ (e :: SomeException) -> do
                 -- Cleanup
@@ -25,8 +25,8 @@ spawnControlThread srv@Server{..} gr@Group{..} = do
                     changeGameState gr GroupDeleted
                     deleteGroup srv gr
                 onRemove
-                errorCollector e
-                logger $ "An Error occured on playing!"
+                errorCollector srv e
+                logger srv $ "An Error occured on playing!"
 
 playGame :: Server -> Group -> Concurrent ()
 playGame srv@Server{..} gr@Group{..} = do
@@ -37,4 +37,4 @@ playGame srv@Server{..} gr@Group{..} = do
         changeGameState gr GroupDeleted
         deleteGroup srv gr
     onRemove
-    logger $ "Group<" <> expr groupId <> "> Game finished!"
+    logger srv $ "Group<" <> expr groupId <> "> Game finished!"
