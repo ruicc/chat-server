@@ -26,7 +26,7 @@ main = do
         host = "localhost"
         portId = PortNumber $ fromIntegral port
         clientNum = 200
-        waitSec = 5
+        waitSec = 40
 --    print =<< C.getNumCapabilities
 
     C.forkIO $ server portId
@@ -51,7 +51,7 @@ server portId = do
 
         (hdl, hostname, _portnumber) <- lift $ accept socket
 
-        (`forkFinally` (\ _ -> lift $ IO.hClose hdl)) $ do
+        (`forkFinally_` (\ _ -> lift $ IO.hClose hdl)) $ do
             lift $ IO.hSetBuffering hdl LineBuffering
             cl <- newClient hdl
             gr <- atomically_ $ newGroup 1 "alice's" 2 3 4 5
@@ -78,7 +78,7 @@ spawnClient host portId n = do
     hdl <- connectTo host portId
     IO.hSetBuffering hdl LineBuffering
 
-    (`C.forkFinally` \ _ -> IO.hClose hdl) $ forM_ [1..100] $ \ i -> do
+    (`C.forkFinally` \ _ -> IO.hClose hdl) $ forM_ [1..1000 :: Int] $ \ i -> do
         IO.hPutStrLn hdl $ "Client " <> show n
         C.threadDelay $ 1000
 

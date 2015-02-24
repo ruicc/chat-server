@@ -53,11 +53,12 @@ groupSelectRepl srv@Server{..} cl = loop
 --{-# NOINLINE groupSelectRepl #-}
 
 joinAndThen :: Server -> Group -> Client -> Concurrent ()
-joinAndThen srv gr cl = mask return $ \restore -> do
+joinAndThen srv gr cl = do -- mask return $ \restore -> do
     !joinSuccess <- joinGroup srv gr cl
     if joinSuccess
         then
-            (`finally_` removeClient srv cl gr) $ restore $ do
+--            (`finally_` removeClient srv cl gr) $ restore $ do
+            (`finally_` removeClient srv cl gr) $ do
                 notifyClient srv gr cl
                 runClient srv gr cl
         else return ()
