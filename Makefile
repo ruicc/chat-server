@@ -8,6 +8,7 @@ conf:
 
 clean:
 	cabal clean
+	rm -f mem-prof.*
 
 server:
 	cabal build server > core.server
