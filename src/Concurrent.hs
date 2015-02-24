@@ -157,10 +157,9 @@ fork_ :: CIO () () -> CIO r ThreadId
 fork_ action = liftIO $ Conc.forkIO $ runCIO (\ () -> return ()) action
 
 forkFinally
-    :: Exception e
-    => (a -> IO r')
+    :: (a -> IO r')
     -> CIO r' a
-    -> (Either e r' -> CIO r'' r'')
+    -> (Either SomeException r' -> CIO r'' r'')
     -> CIO r ThreadId
 forkFinally k action finalizer =
     mask return $ \ restore ->
