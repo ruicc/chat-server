@@ -278,4 +278,46 @@ executable mem-prof
   default-language:
     Haskell2010
 
+executable struct-conc
+  main-is:
+      StructuredConcurrent.hs
+--      Control.Concurrent.Structured
+--      Control.Concurrent.Structured.Exception
+--      Control.Concurrent.Structured.STM
+  default-extensions:
+      ScopedTypeVariables
+    , OverloadedStrings
+    , RecordWildCards
+    , TemplateHaskell
+    , RankNTypes
+    , DeriveDataTypeable
+    , BangPatterns
+    , NoImplicitPrelude
+    , CPP
+  build-depends:
+      base >= 4.7 && <4.8
+    , network
+
+    , async
+    , stm
+    , transformers
+    , mtl
+
+    , containers
+    , bytestring
+    , text
+    , unix-time
+
+  hs-source-dirs:
+    tests, src
+  ghc-options:
+    -O2
+    -threaded
+    -fprof-auto
+--    "-with-rtsopts=-N4"
+    "-with-rtsopts=-N4 -p -s -h -i1"
+  default-language:
+    Haskell2010
+
+
 -- vim: expandtab tabstop=2 softtabstop=2 shiftwidth=2

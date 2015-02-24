@@ -57,32 +57,57 @@ liftSTM m = ContT (m >>=)
 type SomeException = E.SomeException
 type Handler = E.Handler
 
-catch :: E.Exception e => CIO r a -> (e -> CIO r a) -> CIO r a
-catch action handler =
+catch :: E.Exception e => (a -> IO r') -> CIO r' a -> (e -> CIO r' a) -> CIO r r'
+catch k action handler =
     callCC $ \ exit -> do
-        ContT $ \ k -> runContT action k
-                    `E.catch` \ e -> runContT (handler e) (\ a -> runContT (exit a) return)
+        ContT $ \ (k' :: a -> IO r) -> do -- IO
+                r' <- runContT action k `E.catch` \ e -> runContT (handler e) k
+                runContT (exit r') k'
 
-handle :: E.Exception e => (e -> CIO r a) -> CIO r a -> CIO r a
-handle = flip catch
+catch_ :: E.Exception e => CIO a a -> (e -> CIO a a) -> CIO r a
+catch_ = catch return
 
-onException :: CIO r a -> CIO r b -> CIO r a
-onException action handler =
-    action `catch` \ (e :: SomeException) -> do
+handle :: E.Exception e => (a -> IO b) -> (e -> CIO b a) -> CIO b a -> CIO r b
+handle k handler action = catch k action handler
+
+handle_ :: E.Exception e => (e -> CIO a a) -> CIO a a -> CIO r a
+handle_ = handle return
+
+onException :: (a -> IO r') -> CIO r' a -> CIO r' b -> CIO r r'
+onException k action handler =
+    catch' action $ \ (e :: SomeException) -> do
         _ <- handler
         liftIO $ E.throwIO e
+  where
+    catch' = catch k
 
-try :: E.Exception e => CIO r a -> CIO r (Either e a)
-try action = fmap Right action `catch` \ e -> return $ Left e
+onException_ :: CIO a a -> CIO a b -> CIO r a
+onException_ = onException return
 
+try :: E.Exception e => (a -> IO r') -> CIO r' a -> CIO r (Either e r')
+try k action =
+    callCC $ \ exit -> do
+        ContT $ \ k' -> do -- IO
+                ei <- E.try $ runContT action k
+                runContT (exit ei) k'
 
-mask :: ((forall r' a. CIO r' a -> CIO r' a) -> CIO r b) -> CIO r b
-mask userAction = ContT $ \ k -> E.mask $ \ (unblock :: forall a. IO a -> IO a) ->
-    let
-        restore :: forall r a. CIO r a -> CIO r a
-        restore act = ContT $ \cont' -> unblock $ runCIO cont' act
-    in
-        runCIO k (userAction restore)
+try_ :: E.Exception e => CIO a a -> CIO r (Either e a)
+try_ = try return
+
+mask
+    :: (a -> IO r') -- ^ Last action to feed to 2nd arg
+    -> ((forall s b. CIO s b -> CIO s b) -> CIO r' a)
+    -> CIO r r'
+mask k userAction =
+    callCC $ \ exit ->
+        ContT $ \ k' -> do -- IO
+            r' <- E.mask $ \ (unblock :: forall a. IO a -> IO a) ->
+                let
+                    restore :: forall r a. CIO r a -> CIO r a
+                    restore act = ContT $ \k'' -> unblock (runContT act k'')
+                in
+                    runContT (userAction restore) k
+            runContT (exit r') k'
 
 throwTo :: Exception e => ThreadId -> e -> CIO r ()
 throwTo tid e = liftIO $ Conc.throwTo tid e
@@ -90,18 +115,34 @@ throwTo tid e = liftIO $ Conc.throwTo tid e
 throwCIO :: Exception e => e -> CIO r a
 throwCIO = liftIO . E.throwIO
 
-bracket :: CIO r a -> (a -> CIO r b) -> (a -> CIO r c) -> CIO r c
-bracket before after thing = mask $ \restore -> do
-    a <- before
-    r <- restore (thing a) `onException` after a
-    _ <- after a
-    return r
+bracket
+    :: (c -> IO r')
+    -> CIO r' a -- ^ before (typically, gaining a resource)
+    -> (a -> CIO r' b) -- ^ after (release the resrouce)
+    -> (a -> CIO r' c) -- ^ action (use the resrouce)
+    -> CIO r r'
+bracket k before after action =
+    mask return $ \restore -> do -- CIO r'
+        a <- before
+        r <- onException' (restore (action a)) (after a)
+        _ <- after a
+        return r
+  where
+    onException' = onException k
 
-finally :: CIO r a -> CIO r b -> CIO r a
-finally action finalizer = mask $ \restore -> do
-    r <- restore action `onException` finalizer 
-    _ <- finalizer
-    return r
+finally
+    :: (a -> IO r') -- ^ last action to feed
+    -> CIO r' a -- ^ action
+    -> CIO r' t -- ^ finalizer
+    -> CIO r r'
+finally k action finalizer =
+    mask return $ \restore -> do -- CIO r'
+        r' <- onException' (restore action) finalizer
+        _ <- finalizer
+        return r'
+  where
+    onException' = onException k
+
 
 ------------------------------------------------------------------------------------------
 -- | Concurrent
@@ -115,20 +156,25 @@ fork k action = liftIO $ Conc.forkIO (void $ runCIO k action)
 fork_ :: CIO () () -> CIO r ThreadId
 fork_ action = liftIO $ Conc.forkIO $ runCIO (\ () -> return ()) action
 
-forkFinally :: CIO r' a -> (Either SomeException a -> CIO r' r') -> CIO r ThreadId
-forkFinally action finalizer =
-    mask $ \ restore ->
+forkFinally
+    :: Exception e
+    => (a -> IO r')
+    -> CIO r' a
+    -> (Either e r' -> CIO r'' r'')
+    -> CIO r ThreadId
+forkFinally k action finalizer =
+    mask return $ \ restore ->
         fork
-            (\ e -> runCIO return (finalizer e))
-            (try $ restore action)
+            (\ ei -> runCIO return (finalizer ei))
+            (try k $ restore action)
 
---forkWithUnmask :: ((forall a. Concurrent a -> Concurrent a) -> Concurrent ()) -> Concurrent ThreadId
---forkWithUnmask userAction = liftIO $ Conc.forkIOWithUnmask $ \ (unmaskIO :: forall a. IO a -> IO a) -> 
---    let
---        unmask :: Concurrent a -> Concurrent a
---        unmask action = liftIO $ unmaskIO $ runConcurrent return action
---    in
---        runConcurrent return (userAction unmask)
+----forkWithUnmask :: ((forall a. Concurrent a -> Concurrent a) -> Concurrent ()) -> Concurrent ThreadId
+----forkWithUnmask userAction = liftIO $ Conc.forkIOWithUnmask $ \ (unmaskIO :: forall a. IO a -> IO a) ->
+----    let
+----        unmask :: Concurrent a -> Concurrent a
+----        unmask action = liftIO $ unmaskIO $ runConcurrent return action
+----    in
+----        runConcurrent return (userAction unmask)
 
 killThread :: ThreadId -> CIO r ()
 killThread = liftIO . Conc.killThread
@@ -155,10 +201,13 @@ orElse m n = ContT $ \ k -> S.orElse (runCSTM k m) (runCSTM k n)
 check :: Bool -> CSTM r ()
 check = liftSTM . S.check
 
-catchSTM :: Exception e => CSTM r a -> (e -> CSTM r a) -> CSTM r a
-catchSTM action handler =
+
+catchSTM :: Exception e => (a -> STM r') -> CSTM r' a -> (e -> CSTM r' a) -> CSTM r r'
+catchSTM k action handler =
     callCC $ \ exit ->
-        ContT $ \ k -> S.catchSTM (runCSTM k action) (\e -> runCSTM (\a -> runCSTM return (exit a)) $ handler e)
+        ContT $ \ k' -> do -- STM
+            r' <- (runContT action k) `S.catchSTM` (\ e -> runContT (handler e) k)
+            runContT (exit r') k'
 
 -- | TVar
 
