@@ -18,7 +18,7 @@ spawnLogger erCh stCh logCh = do
             as :: Async ()
                 <- async (logger ch)
             res :: Either SomeException ()
-                <- try $ wait as
+                <- try_ $ wait as
             case res of
                 Left e -> do
                     atomically_ $ writeTChan erCh e
@@ -107,7 +107,7 @@ spawnStatAggregator erCh stCh stat = do
             as :: Async ()
                 <- async (aggregator ch astat)
             res :: Either SomeException ()
-                <- try $ wait as
+                <- try_ $ wait as
 
             case res of
                 Left e -> do
@@ -144,7 +144,7 @@ spawnErrorCollector erCh stCh stat = do
             as :: Async ()
                 <- async (collector ch)
             res :: Either SomeException ()
-                <- try $ wait as
+                <- try_ $ wait as
             case res of
                 Left e -> do
                     atomically_ $ writeTChan ch e

@@ -16,7 +16,7 @@ clean:
 	rm -f mem-prof.*
 
 server:
-	cabal build server > core.server
+	make core CORE=server
 	cabal run server
 
 client:

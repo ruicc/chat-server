@@ -27,39 +27,40 @@ runClientThread srv@Server{..} hdl = do
 groupSelectRepl :: Server -> Client -> Concurrent ()
 groupSelectRepl srv@Server{..} cl = loop
   where
-    loop = forever $ do
-        C.callCC $ \exit -> do
-            showGroups srv cl
-            !mmsg <- getUserMessage srv cl
+    loop = do
+        showGroups srv cl
+        !mmsg <- getUserMessage srv cl
 
-            () <- case mmsg of
-                Just msg -> case msg of
-                    Quit -> throwCIO QuitGame
+        () <- case mmsg of
+            Just msg -> case msg of
+                Quit -> throwCIO QuitGame
 
-                    NewGroup name capacity time timeout -> do
-                        !gid <- liftIO newUniqueInt
-                        !ts <- liftIO Time.getUnixTimeAsInt
-                        !gr <- atomically_ $ createGroup srv gid name capacity time ts timeout
-                        tick srv Log.GroupNew
-                        joinAndThen srv gr cl
+                NewGroup name capacity time timeout -> do
+                    !gid <- liftIO newUniqueInt
+                    !ts <- liftIO Time.getUnixTimeAsInt
+                    !gr <- atomically_ $ createGroup srv gid name capacity time ts timeout
+                    tick srv Log.GroupNew
+                    joinAndThen srv gr cl
 
-                    JoinGroup gid -> do
-                        !mgr <- atomically_ $ getGroup srv gid
-                        case mgr of
-                            Just gr -> joinAndThen srv gr cl
-                            Nothing -> return ()
+                JoinGroup gid -> do
+                    !mgr <- atomically_ $ getGroup srv gid
+                    case mgr of
+                        Just gr -> joinAndThen srv gr cl
+                        Nothing -> return ()
 
-                Nothing -> return ()
-            exit ()
+            Nothing -> return ()
+        loop
 --{-# NOINLINE groupSelectRepl #-}
 
 joinAndThen :: Server -> Group -> Client -> Concurrent ()
-joinAndThen srv gr cl = mask $ \restore -> do
+joinAndThen srv gr cl = mask return $ \restore -> do
     !joinSuccess <- joinGroup srv gr cl
-    when joinSuccess $
-        (`finally` removeClient srv cl gr) $ restore $ do
-            notifyClient srv gr cl
-            runClient srv gr cl
+    if joinSuccess
+        then
+            (`finally_` removeClient srv cl gr) $ restore $ do
+                notifyClient srv gr cl
+                runClient srv gr cl
+        else return ()
 --{-# NOINLINE joinAndThen #-}
 
 --clientJoinGroup :: Server -> Group -> Client -> Concurrent ()

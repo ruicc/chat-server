@@ -27,10 +27,10 @@ runChatServer port = withSocketsDo $ do
         (hdl, hostname, _portnumber) <- liftIO $ accept socket
         logger server $ "Accepted from " <> expr hostname <> "\n" 
 
-        forkFinally (run server hdl) (errorHandler server hdl)
+        forkFinally_ (run server hdl) (errorHandler server hdl)
 
 run :: Server -> Handle -> Concurrent ()
-run server hdl = runClientThread server hdl `catch` quitHandler server
+run server hdl = runClientThread server hdl `catch_` quitHandler server
 
 errorHandler :: Server -> Handle -> Either SomeException () -> Concurrent ()
 errorHandler server hdl (Left e) = do

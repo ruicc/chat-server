@@ -11,7 +11,7 @@ spawnControlThread srv@Server{..} gr@Group{..} = do
     void $ fork_ $ do
         threadDelay $ 1 * 1000 * 1000
 
-        mask $ \ restore -> do
+        mask return $ \ restore -> do
             tid <- myThreadId
             atomically_ $ do
                 sendBroadcast gr (Command "!begin")
@@ -19,7 +19,7 @@ spawnControlThread srv@Server{..} gr@Group{..} = do
                 changeGameState gr Playing
             logger srv $ "Group<" <> expr groupId <> "> Game begins!"
 
-            restore (playGame srv gr) `catch` \ (e :: SomeException) -> do
+            restore (playGame srv gr) `catch_` \ (e :: SomeException) -> do
                 -- Cleanup
                 onRemove <- atomically_ $ do
                     changeGameState gr GroupDeleted
