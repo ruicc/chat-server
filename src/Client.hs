@@ -56,7 +56,7 @@ clientProgram cnf cnt = do
 
     cl <- initialize hdl
 
-    forM_ [1..40 :: Int] $ \ i -> do
+    forM_ [1..20 :: Int] $ \ i -> do
         (cl', gid) <- createNewGroup cl "alice's" 2 20 30
 
         chat cl' "Hello!"
