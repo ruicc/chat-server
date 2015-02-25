@@ -25,42 +25,58 @@ runClientThread srv@Server{..} hdl = do
 
 
 groupSelectRepl :: Server -> Client -> Concurrent ()
-groupSelectRepl srv@Server{..} cl = loop
+groupSelectRepl srv@Server{..} cl = liftIO loop
   where
-    loop = do
-        showGroups srv cl
-        !mmsg <- getUserMessage srv cl
+    loop = forever $ do
+        runCIO (\a -> return a) $ do
+            !() <- showGroups srv cl
+            !mmsg <- getUserMessage srv cl
 
-        () <- case mmsg of
-            Just msg -> case msg of
-                Quit -> throwCIO QuitGame
-
-                NewGroup name capacity time timeout -> do
-                    !gid <- liftIO newUniqueInt
-                    !ts <- liftIO Time.getUnixTimeAsInt
-                    !gr <- atomically_ $ createGroup srv gid name capacity time ts timeout
-                    tick srv Log.GroupNew
-                    joinAndThen srv gr cl
-
-                JoinGroup gid -> do
-                    !mgr <- atomically_ $ getGroup srv gid
-                    case mgr of
-                        Just gr -> joinAndThen srv gr cl
-                        Nothing -> return ()
-
-            Nothing -> return ()
-        loop
+            !() <- case mmsg of
+                Just msg -> handleClientMessage srv cl msg
+                Nothing -> return ()
+            return ()
 --{-# NOINLINE groupSelectRepl #-}
 
+handleClientMessage :: Server -> Client -> ClientMessage -> Concurrent ()
+handleClientMessage srv cl msg = case msg of
+    Quit -> throwCIO QuitGame
+
+    NewGroup name capacity time timeout -> do
+        !gr <- createGroupCIO srv name capacity time timeout
+        !() <- joinAndThen srv gr cl
+        return ()
+
+    JoinGroup gid -> do
+        !mgr <- atomically_ $ getGroup srv gid
+        case mgr of
+            Just gr -> do
+                !() <- joinAndThen srv gr cl
+                return ()
+            Nothing -> return ()
+
+createGroupCIO :: Server -> GroupName -> GroupCapacity -> PlayTime -> Timeout -> CIO r Group
+createGroupCIO srv name cap time to = do
+    !gid <- liftIO newUniqueInt
+    !ts <- liftIO Time.getUnixTimeAsInt
+    !gr <- atomically_ $ createGroup srv gid name cap time ts to
+    !() <- tick srv Log.GroupNew
+    return gr
+
 joinAndThen :: Server -> Group -> Client -> Concurrent ()
-joinAndThen srv gr cl = do -- mask return $ \restore -> do
+joinAndThen srv gr cl = mask_ $ \restore -> do
     !joinSuccess <- joinGroup srv gr cl
     if joinSuccess
-        then
---            (`finally_` removeClient srv cl gr) $ restore $ do
-            (`finally_` removeClient srv cl gr) $ do
-                notifyClient srv gr cl
-                runClient srv gr cl
+        then do
+            let
+                finalizer = removeClient srv cl gr
+                clientErrorHandler = \ (_ :: ClientException) -> return ()
+                action = do
+                    !() <- notifyClient srv gr cl
+                    !() <- runClient srv gr cl
+                    return ()
+            !() <- restore action `catch_` clientErrorHandler `finally_` finalizer
+            return ()
         else return ()
 --{-# NOINLINE joinAndThen #-}
 
@@ -246,6 +262,7 @@ handleMessage srv@Server{..} gr@Group{..} cl@Client{..} msg = do
             case words str of
                 ["/leave"] -> do
                     -- Leave the room.
+--                    throwCIO LeaveRoom
                     return False
 
                 ["/quit"] -> do

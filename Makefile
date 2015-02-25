@@ -13,7 +13,8 @@ conf:
 
 clean:
 	cabal clean
-	rm -f mem-prof.*
+	rm -f core.$(CORE)
+	rm -f $(PROF).*
 
 server:
 	make core CORE=server
@@ -27,5 +28,8 @@ repl:
 
 prof:
 	cabal run $(PROF) > /dev/null 2>&1
+	make tops
+
+tops:
 	hp2ps -e8in -c $(PROF).hp
 	cp $(PROF).ps /vagrant

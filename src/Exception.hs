@@ -5,7 +5,9 @@ import Data.Typeable
 import Control.Exception
 
 
-data ClientException = KickedFromRoom
+data ClientException
+    = KickedFromRoom
+    | LeaveRoom
     deriving (Show, Typeable)
 
 data QuitGame = QuitGame

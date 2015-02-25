@@ -23,15 +23,15 @@ type CSTM r a = ContT r S.STM a
 type Concurrent a = CIO () a
 
 runCIO :: (a -> IO r) -> CIO r a -> IO r
-runCIO k action = runContT action k
+runCIO k action = runContT action (\a -> k a)
 --{-# INLINE runCIO #-}
 
 runCSTM :: (a -> S.STM r) -> CSTM r a -> S.STM r
-runCSTM k action = runContT action k
+runCSTM k action = runContT action (\a -> k a)
 --{-# INLINE runCSTM #-}
 
 atomically :: (a -> S.STM r') -> CSTM r' a -> CIO r r'
-atomically k action = liftIO $ S.atomically $ runCSTM k action
+atomically k action = liftIO $ S.atomically $ runCSTM (\a -> k a) action
 --{-# INLINE atomically #-}
 
 atomically_ :: CSTM r' r' -> CIO r r'
@@ -43,11 +43,11 @@ runConcurrent action = runCIO (const $ return ()) action
 --{-# INLINE runConcurrent #-}
 
 runSTM :: S.STM a -> CIO r a
-runSTM = liftIO . S.atomically
+runSTM m = liftIO $ S.atomically m
 --{-# INLINE runSTM #-}
 
 liftSTM :: S.STM a -> CSTM r a
-liftSTM m = ContT (m >>=)
+liftSTM m = ContT (\k -> m >>= k)
 --{-# INLINE liftSTM #-}
 
 
@@ -61,17 +61,17 @@ catch :: E.Exception e => (a -> IO r') -> CIO r' a -> (e -> CIO r' a) -> CIO r r
 catch k action handler =
     callCC $ \ exit -> do
         ContT $ \ (k' :: a -> IO r) -> do -- IO
-                r' <- runContT action k `E.catch` \ e -> runContT (handler e) k
+                r' <- runContT action k `E.catch` \ e -> runContT (handler e) (\a -> k a)
                 runContT (exit r') k'
 
 catch_ :: E.Exception e => CIO a a -> (e -> CIO a a) -> CIO r a
-catch_ = catch return
+catch_ = catch (\a -> return a)
 
 handle :: E.Exception e => (a -> IO b) -> (e -> CIO b a) -> CIO b a -> CIO r b
-handle k handler action = catch k action handler
+handle k handler action = catch (\a -> k a) action handler
 
 handle_ :: E.Exception e => (e -> CIO a a) -> CIO a a -> CIO r a
-handle_ = handle return
+handle_ = handle (\a -> return a)
 
 onException :: (a -> IO r') -> CIO r' a -> CIO r' b -> CIO r r'
 onException k action handler =
@@ -79,20 +79,20 @@ onException k action handler =
         _ <- handler
         liftIO $ E.throwIO e
   where
-    catch' = catch k
+    catch' = catch (\a -> k a)
 
 onException_ :: CIO a a -> CIO a b -> CIO r a
-onException_ = onException return
+onException_ = onException (\a -> return a)
 
 try :: E.Exception e => (a -> IO r') -> CIO r' a -> CIO r (Either e r')
 try k action =
     callCC $ \ exit -> do
         ContT $ \ k' -> do -- IO
-                ei <- E.try $ runContT action k
+                ei <- E.try $ runContT action (\a -> k a)
                 runContT (exit ei) k'
 
 try_ :: E.Exception e => CIO a a -> CIO r (Either e a)
-try_ = try return
+try_ = try (\a -> return a)
 
 mask
     :: (a -> IO r') -- ^ Last action to feed to 2nd arg
@@ -106,8 +106,13 @@ mask k userAction =
                     restore :: forall r a. CIO r a -> CIO r a
                     restore act = ContT $ \k'' -> unblock (runContT act k'')
                 in
-                    runContT (userAction restore) k
+                    runContT (userAction restore) (\a -> k a)
             runContT (exit r') k'
+
+mask_
+    :: ((forall s b. CIO s b -> CIO s b) -> CIO a a)
+    -> CIO r a
+mask_ = mask (\a -> return a)
 
 throwTo :: Exception e => ThreadId -> e -> CIO r ()
 throwTo tid e = liftIO $ Conc.throwTo tid e
@@ -122,13 +127,13 @@ bracket
     -> (a -> CIO r' c) -- ^ action (use the resrouce)
     -> CIO r r'
 bracket k before after action =
-    mask return $ \restore -> do -- CIO r'
+    mask_ $ \restore -> do -- CIO r'
         a <- before
         r <- onException' (restore (action a)) (after a)
         _ <- after a
         return r
   where
-    onException' = onException k
+    onException' = onException (\a -> k a)
 
 finally
     :: (a -> IO r') -- ^ last action to feed
@@ -136,18 +141,18 @@ finally
     -> CIO r' t -- ^ finalizer
     -> CIO r r'
 finally k action finalizer =
-    mask return $ \restore -> do -- CIO r'
+    mask_ $ \restore -> do -- CIO r'
         r' <- onException' (restore action) finalizer
         _ <- finalizer
         return r'
   where
-    onException' = onException k
+    onException' = onException (\a -> k a)
 
 finally_
     :: CIO a a -- ^ action
     -> CIO a t -- ^ finalizer
     -> CIO r a
-finally_ = finally return
+finally_ = finally (\a -> return a)
 
 ------------------------------------------------------------------------------------------
 -- | Concurrent
@@ -156,7 +161,7 @@ myThreadId :: CIO r ThreadId
 myThreadId = liftIO Conc.myThreadId
 
 fork :: (a -> IO r') -> CIO r' a -> CIO r ThreadId
-fork k action = liftIO $ Conc.forkIO (void $ runCIO k action)
+fork k action = liftIO $ Conc.forkIO (void $ runCIO (\a -> k a) action)
 
 fork_ :: CIO () () -> CIO r ThreadId
 fork_ action = liftIO $ Conc.forkIO $ runCIO (\ () -> return ()) action
@@ -167,10 +172,10 @@ forkFinally
     -> (Either SomeException r' -> CIO r'' r'')
     -> CIO r ThreadId
 forkFinally k action finalizer =
-    mask return $ \ restore ->
+    mask_ $ \ restore ->
         fork
             (\ ei -> runCIO return (finalizer ei))
-            (try k $ restore action)
+            (try (\a -> k a) $ restore action)
 
 forkFinally_
     :: CIO a a
@@ -206,7 +211,7 @@ retry :: CSTM r a
 retry = liftSTM S.retry
 
 orElse :: CSTM r a -> CSTM r a -> CSTM r a
-orElse m n = ContT $ \ k -> S.orElse (runCSTM k m) (runCSTM k n)
+orElse m n = ContT $ \ k -> S.orElse (runCSTM (\a -> k a) m) (runCSTM (\a -> k a) n)
 
 check :: Bool -> CSTM r ()
 check = liftSTM . S.check
@@ -216,49 +221,49 @@ catchSTM :: Exception e => (a -> STM r') -> CSTM r' a -> (e -> CSTM r' a) -> CST
 catchSTM k action handler =
     callCC $ \ exit ->
         ContT $ \ k' -> do -- STM
-            r' <- (runContT action k) `S.catchSTM` (\ e -> runContT (handler e) k)
+            r' <- (runContT action (\a -> k a)) `S.catchSTM` (\ e -> runContT (handler e) (\a -> k a))
             runContT (exit r') k'
 
 -- | TVar
 
 newTVar :: a -> CSTM r (TVar a)
-newTVar = liftSTM . S.newTVar
+newTVar v = liftSTM $ S.newTVar v
 --{-# INLINE newTVar #-}
 
 newTVarCIO :: a -> CIO r (TVar a)
-newTVarCIO = liftIO . S.newTVarIO
+newTVarCIO v = liftIO $ S.newTVarIO v
 --{-# INLINE newTVarCIO #-}
 
 readTVar :: TVar a -> CSTM r a
-readTVar = liftSTM . S.readTVar
+readTVar v = liftSTM $ S.readTVar v
 --{-# INLINE readTVar #-}
 
 readTVarCIO :: TVar a -> CIO r a
-readTVarCIO = liftIO . S.readTVarIO
+readTVarCIO tv = liftIO $ S.readTVarIO tv
 --{-# INLINE readTVarCIO #-}
 
 writeTVar :: TVar a -> a -> CSTM r ()
-writeTVar = (liftSTM .) . S.writeTVar
+writeTVar tv v = liftSTM $ S.writeTVar tv v
 --{-# INLINE writeTVar #-}
 
 modifyTVar :: TVar a -> (a -> a) -> CSTM r ()
-modifyTVar = (liftSTM .) . S.modifyTVar
+modifyTVar tv v  = liftSTM $ S.modifyTVar tv v
 --{-# INLINE modifyTVar #-}
 
 modifyTVar' :: TVar a -> (a -> a) -> CSTM r ()
-modifyTVar' = (liftSTM .) . S.modifyTVar'
+modifyTVar' tv v = liftSTM $ S.modifyTVar' tv v
 --{-# INLINE modifyTVar' #-}
 
 swapTVar :: TVar a -> a -> CSTM r a
-swapTVar = (liftSTM .) . S.swapTVar
+swapTVar tv v = liftSTM $ S.swapTVar tv v
 --{-# INLINE swapTVar #-}
 
 registerDelay :: Int -> CIO r (TVar Bool)
-registerDelay = liftIO . S.registerDelay
+registerDelay v = liftIO $ S.registerDelay v
 --{-# INLINE registerDelay #-}
 
 mkWeakTVar :: TVar a -> CIO () () -> CIO r (Weak (TVar a))
-mkWeakTVar tv finalizer = liftIO $ S.mkWeakTVar tv (runCIO return finalizer)
+mkWeakTVar tv finalizer = liftIO $ S.mkWeakTVar tv (runCIO (\a -> return a) finalizer)
 --{-# INLINE mkWeakTVar #-}
 
 -- | TChan
@@ -276,42 +281,42 @@ newBroadcastTChan = liftSTM S.newBroadcastTChan
 --{-# INLINE newBroadcastTChan #-}
 
 dupTChan :: TChan a -> CSTM r (TChan a)
-dupTChan = liftSTM . S.dupTChan
+dupTChan tc = liftSTM $ S.dupTChan tc
 --{-# INLINE dupTChan #-}
 
 cloneTChan :: TChan a -> CSTM r (TChan a)
-cloneTChan = liftSTM . S.cloneTChan
+cloneTChan tc = liftSTM $ S.cloneTChan tc
 --{-# INLINE cloneTChan #-}
 
 readTChan :: TChan a -> CSTM r a
-readTChan = liftSTM . S.readTChan
+readTChan tc = liftSTM $ S.readTChan tc
 --{-# INLINE readTChan #-}
 
 tryReadTChan :: TChan a -> CSTM r (Maybe a)
-tryReadTChan = liftSTM . S.tryReadTChan
+tryReadTChan tc = liftSTM $ S.tryReadTChan tc
 --{-# INLINE tryReadTChan #-}
 
 tryPeekTChan :: TChan a -> CSTM r (Maybe a)
-tryPeekTChan = liftSTM . S.tryPeekTChan
+tryPeekTChan tc = liftSTM $ S.tryPeekTChan tc
 --{-# INLINE tryPeekTChan #-}
 
 writeTChan :: TChan a -> a -> CSTM r ()
-writeTChan = (liftSTM .) . S.writeTChan
+writeTChan tc v = liftSTM $ S.writeTChan tc v
 --{-# INLINE writeTChan #-}
 
 unGetTChan :: TChan a -> a -> CSTM r ()
-unGetTChan = (liftSTM .) . S.unGetTChan
+unGetTChan tc v = liftSTM $ S.unGetTChan tc v
 --{-# INLINE unGetTChan #-}
 
 isEmptyTChan :: TChan a -> CSTM r Bool
-isEmptyTChan = liftSTM . S.isEmptyTChan
+isEmptyTChan tc = liftSTM $ S.isEmptyTChan tc
 --{-# INLINE isEmptyTChan #-}
 
 
 -- | TMVar
 
 newTMVar :: a -> CSTM r (TMVar a)
-newTMVar = liftSTM . S.newTMVar
+newTMVar v = liftSTM $ S.newTMVar v
 --{-# INLINE newTMVar #-}
 
 newEmptyTMVar :: CSTM r (TMVar a)
@@ -319,7 +324,7 @@ newEmptyTMVar = liftSTM S.newEmptyTMVar
 --{-# INLINE newEmptyTMVar #-}
 
 newTMVarCIO :: a -> CIO r (TMVar a) 
-newTMVarCIO = liftIO . S.newTMVarIO
+newTMVarCIO v = liftIO $ S.newTMVarIO v
 --{-# INLINE newTMVarCIO #-}
 
 newEmptyTMVarCIO :: CIO r (TMVar a) 
@@ -327,35 +332,35 @@ newEmptyTMVarCIO = liftIO S.newEmptyTMVarIO
 --{-# INLINE newEmptyTMVarCIO #-}
 
 takeTMVar :: TMVar a -> CSTM r a
-takeTMVar = liftSTM . S.takeTMVar
+takeTMVar tm = liftSTM $ S.takeTMVar tm
 --{-# INLINE takeTMVar #-}
 
 putTMVar :: TMVar a -> a -> CSTM r ()
-putTMVar = (liftSTM .) . S.putTMVar
+putTMVar tm v = liftSTM $ S.putTMVar tm v
 --{-# INLINE putTMVar #-}
 
 readTMVar :: TMVar a -> CSTM r a 
-readTMVar = liftSTM . S.readTMVar
+readTMVar tm = liftSTM $ S.readTMVar tm
 --{-# INLINE readTMVar #-}
 
 tryReadTMVar :: TMVar a -> CSTM r (Maybe a)
-tryReadTMVar = liftSTM . S.tryReadTMVar
+tryReadTMVar tm = liftSTM $ S.tryReadTMVar tm
 --{-# INLINE tryReadTMVar #-}
 
 swapTMVar :: TMVar a -> a -> CSTM r a
-swapTMVar = (liftSTM .) . S.swapTMVar
+swapTMVar tm v = liftSTM $ S.swapTMVar tm v
 --{-# INLINE swapTMVar #-}
 
 tryTakeTMVar :: TMVar a -> CSTM r (Maybe a)
-tryTakeTMVar = liftSTM . S.tryTakeTMVar
+tryTakeTMVar tm = liftSTM $ S.tryTakeTMVar tm
 --{-# INLINE tryTakeTMVar #-}
 
 tryPutTMVar :: TMVar a -> a -> CSTM r Bool
-tryPutTMVar = (liftSTM .) . S.tryPutTMVar
+tryPutTMVar tm v = liftSTM $ S.tryPutTMVar tm v
 --{-# INLINE tryPutTMVar #-}
 
 isEmptyTMVar :: TMVar a -> CSTM r Bool
-isEmptyTMVar = liftSTM . S.isEmptyTMVar
+isEmptyTMVar tm = liftSTM $ S.isEmptyTMVar tm
 --{-# INLINE isEmptyTMVar #-}
 
 --mkWeakTMVar :: TMVar a -> CIO () () -> CIO r (Weak (TMVar a))

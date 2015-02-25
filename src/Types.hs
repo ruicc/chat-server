@@ -182,7 +182,7 @@ clientGet :: Server -> Client -> CIO r ShortByteString
 clientGet srv@Server{..} Client{..} = do
     !str <- rstrip <$> (liftIO $ hGetLine clientHandle)
     !() <- liftIO $ hFlush clientHandle
-    logger srv $ "(raw) " <> str
+    !() <- logger srv $ "(raw) " <> str
     return str
 --{-# NOINLINE clientGet #-}
 
@@ -198,8 +198,7 @@ clientPut Client{..} str = do
 -- | Message
 
 sendMessage :: Client -> Message -> CSTM r ()
-sendMessage Client{..} msg = do
-    writeTChan clientChan msg
+sendMessage Client{..} msg = writeTChan clientChan msg
 
 
 sendBroadcast :: Group -> Message -> CSTM r ()
