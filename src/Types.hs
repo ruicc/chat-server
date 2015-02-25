@@ -140,7 +140,6 @@ createGroup Server{..} gid name capacity playTime ts timeout = do
 --{-# NOINLINE createGroup #-}
 
 -- FIXME: basic operation and high-level operation should be separated..
--- TODO: CSTM r (Concurrent ())
 deleteGroup :: Server -> Group -> CSTM r (Concurrent ())
 deleteGroup srv@Server{..} gr@Group{..} = do
     members :: [(ClientId, Client)]
@@ -148,18 +147,19 @@ deleteGroup srv@Server{..} gr@Group{..} = do
     changeGameState gr GroupDeleted
     modifyTVar' serverGroups $ IM.delete groupId
 
-    -- TODO: 後で
---    tid <- readTMVar groupCanceler
-
-    return $ do -- CIO
+    return $ do -- CIO ()
         forM_ members $ \ (cid, Client{..}) -> do
             throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
 
-        -- Killing the canceler thread must be done at last
-        -- so that the canceler thread can call deleteGroup.
-        -- TODO: 後で
---        killThread tid
 --{-# NOINLINE deleteGroup #-}
+
+killCanceler :: Group -> CSTM r (Concurrent ())
+killCanceler Group{..} = do
+    mtid <- tryReadTMVar groupCanceler
+    return $ do
+        case mtid of
+            Just tid -> killThread tid
+            Nothing -> return ()
 
 ------------------------------------------------------------------------------------------
 -- | Client
