@@ -269,6 +269,10 @@ executable mem-prof
     , bytestring
     , text
     , unix-time
+    , yaml
+    , aeson
+    , scientific
+    , unordered-containers
 
   hs-source-dirs:
     tests, src

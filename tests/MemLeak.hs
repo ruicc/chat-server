@@ -13,6 +13,7 @@ import qualified Data.IntMap as IM
 import Network
 
 import App.Prelude as P
+import App.Config
 import Concurrent
 import Server
 import Types
@@ -22,10 +23,13 @@ import Utils
 
 main :: IO ()
 main = do
-    let port = 3002
-        host = "localhost"
+    cnf :: Config
+        <- getConfig "config/settings.yml"
+
+    let port = serverPort $ serverConfig cnf
+        host = serverHost $ serverConfig cnf
         portId = PortNumber $ fromIntegral port
-        clientNum = 100
+        clientNum = clientSpawnThreads $ clientConfig cnf
         waitSec = 10
 --    print =<< C.getNumCapabilities
 
