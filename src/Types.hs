@@ -148,7 +148,8 @@ deleteGroup srv@Server{..} gr@Group{..} = do
     changeGameState gr GroupDeleted
     modifyTVar' serverGroups $ IM.delete groupId
 
-    tid <- readTMVar groupCanceler
+    -- TODO: 後で
+--    tid <- readTMVar groupCanceler
 
     return $ do -- CIO
         forM_ members $ \ (cid, Client{..}) -> do
@@ -156,7 +157,8 @@ deleteGroup srv@Server{..} gr@Group{..} = do
 
         -- Killing the canceler thread must be done at last
         -- so that the canceler thread can call deleteGroup.
-        killThread tid
+        -- TODO: 後で
+--        killThread tid
 --{-# NOINLINE deleteGroup #-}
 
 ------------------------------------------------------------------------------------------
@@ -182,14 +184,15 @@ clientGet :: Server -> Client -> CIO r ShortByteString
 clientGet srv@Server{..} Client{..} = do
     !str <- rstrip <$> (liftIO $ hGetLine clientHandle)
     !() <- liftIO $ hFlush clientHandle
-    !() <- logger srv $ "(raw) " <> str
+    !() <- logger srv $ "Rcv :: " <> str
     return str
 --{-# NOINLINE clientGet #-}
 
-clientPut :: Client -> ShortByteString -> CIO r ()
-clientPut Client{..} str = do
+clientPut :: Server -> Client -> ShortByteString -> CIO r ()
+clientPut srv Client{..} str = do
     !() <- liftIO $ hPutStr clientHandle str
     !() <- liftIO $ hFlush clientHandle
+    !() <- logger srv $ "Snd >> " <> str
     return ()
 --{-# NOINLINE clientPut #-}
 

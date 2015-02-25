@@ -94,6 +94,7 @@ executable client
     , OverloadedStrings
     , RecordWildCards
     , DeriveDataTypeable
+    , CPP
   build-depends:
       base >= 4.7 && <4.8
     , async

@@ -12,14 +12,14 @@ initialize hdl = do
         (Init cid) -> newClient cid hdl
         _ -> error "init error"
 
-createNewGroup :: Client -> ShortByteString -> Int -> Int -> Int -> IO Client
+createNewGroup :: Client -> ShortByteString -> Int -> Int -> Int -> IO (Client, GroupId)
 createNewGroup cl@Client{..} name capacity time timeout = do
     groups <- getMessage clientHandle
     putSB clientHandle $ "/new " <> name <> " " <> expr capacity <> " " <> expr time <> " " <> expr timeout
 
     join <- getMessage clientHandle
     cl <- case join of
-        (Join gid) -> return cl { groupId = Just gid }
+        (Join gid) -> return (cl { groupId = Just gid }, gid)
         _ -> error "join error"
 
     return cl
@@ -29,6 +29,12 @@ chat Client{..} sb = do
     putSB clientHandle sb
     _res <- getMessage clientHandle
     return ()
+
+joinGroup :: Client -> GroupId -> IO Client
+joinGroup cl@Client{..} gid = do
+    putSB clientHandle $ "/join " <> (expr $ gid)
+    _join <- getMessage clientHandle
+    return cl { groupId = Just gid }
 
 leaveGroup :: Client -> IO Client
 leaveGroup cl@Client{..} = do

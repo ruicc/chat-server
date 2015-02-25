@@ -8,14 +8,18 @@ getMessage :: Handle -> IO Message
 getMessage hdl = do
     sb <- rstrip <$> hGetLine hdl
     hFlush hdl
---    putStrLn $ "Rcv :: " <> sb -- logging
+#if DEVELOPMENT
+    putStrLn $ "Rcv :: " <> sb -- logging
+#endif
     return $ fromJust $ sbToMessage sb
 
 putSB :: Handle -> ShortByteString -> IO ()
 putSB hdl sb = do
     hPutStrLn hdl sb
     hFlush hdl
---    putStrLn $ "Snd >> " <> sb -- logging
+#if DEVELOPMENT
+    putStrLn $ "Snd >> " <> sb -- logging
+#endif
 
 sbToMessage :: ShortByteString -> Maybe Message
 sbToMessage sb = case words sb of

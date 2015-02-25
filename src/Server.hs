@@ -99,8 +99,8 @@ showGroups srv cl = do
     !grs -- :: [(GroupId, Group)]
         <- atomically_ $ getAllGroups srv
 
-    clientPut cl $ "!groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
---            clientPut cl $ mconcat
+    clientPut srv cl $ "!groups " <> (mconcat $ intersperse " " $ map (expr . fst) grs) <> "\n"
+--            clientPut srv cl $ mconcat
 --                [ "{\"rooms\":["
 --                , mconcat $ intersperse "," $ map (expr . fst) grs
 --                , "],"
@@ -131,7 +131,7 @@ initClient :: Server -> Handle -> Concurrent Client
 initClient srv hdl = do
     !cl <- newClient hdl
     tick srv $ Log.ClientNew
-    clientPut cl $ "!init " <> (expr $ clientId cl) <> "\n"
+    clientPut srv cl $ "!init " <> (expr $ clientId cl) <> "\n"
 --    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
     return cl
 --{-# NOINLINE initClient #-}
@@ -141,7 +141,7 @@ notifyClient :: Server -> Group -> Client -> Concurrent ()
 notifyClient srv@Server{..} gr@Group{..} cl@Client{..} = do
 
     -- Notice group to User
-    clientPut cl $ "!event join " <> expr groupId <> "\n"
+    clientPut srv cl $ "!event join " <> expr groupId <> "\n"
 --{-# NOINLINE notifyClient #-}
 
 
@@ -211,7 +211,6 @@ joinGroup srv@Server{..} gr@Group{..} cl@Client{..} = join $ atomically_ $ do
 
 removeClient :: Server -> Client -> Group -> Concurrent ()
 removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
-    logger srv "removeClient"
     join $ atomically_ $ do
         !cnt <- readTVar groupMemberCount
         !mcl <- getClient clientId gr
@@ -222,20 +221,20 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
 
                 sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
 
---                mOnRemove <- if (cnt == 1)
---                    then do
---                        onRemove <- deleteGroup srv gr
---                        return $ Just $ do
---                            onRemove
---                    else return Nothing
+                mOnRemove <- if (cnt == 1)
+                    then do
+                        onRemove <- deleteGroup srv gr
+                        return $ Just $ do
+                            onRemove
+                    else return Nothing
 
                 return $ do
---                    case mOnRemove of
---                        -- Kill timeout canceller
---                        Just onRemove -> onRemove
---                        Nothing -> return ()
+                    case mOnRemove of
+                        -- Kill timeout canceller
+                        Just onRemove -> onRemove
+                        Nothing -> return ()
 
-                    clientPut cl $ mconcat
+                    !() <- clientPut srv cl $ mconcat
                         [ "!event leave"
                         , "\n"
                         ]
@@ -406,6 +405,6 @@ spawnTimeoutCanceler srv gr = void $ fork_ $ do
 --                    Nothing -> do
 --                        loop
 --            _ -> do
---                clientPut cl $ "!status \"group-select\"\n"
+--                clientPut srv cl $ "!status \"group-select\"\n"
 --                loop
 

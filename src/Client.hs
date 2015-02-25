@@ -8,6 +8,7 @@ import Client.Types
 import Client.Actions
 import Client.Utils
 import Network
+import Data.Maybe (fromJust)
 
 
 main :: IO ()
@@ -56,7 +57,7 @@ clientProgram cnf cnt = do
     cl <- initialize hdl
 
     forM_ [1..40 :: Int] $ \ i -> do
-        cl' <- createNewGroup cl "alice's" 2 20 30
+        (cl', gid) <- createNewGroup cl "alice's" 2 20 30
 
         chat cl' "Hello!"
 
