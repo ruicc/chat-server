@@ -151,33 +151,36 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
     !broadcastCh <- atomically_ $ dupTChan groupBroadcastChan
 
     -- Spawn 3 linked threads.
-    race_ (broadcastReceiver cl broadcastCh) (race_ (clientReceiver srv cl) (clientServer srv gr cl))
+    !() <- race_
+            (broadcastReceiver cl broadcastCh)
+            (race_ (clientReceiver srv cl) (clientServer srv gr cl))
+    return ()
 --{-# NOINLINE runClient #-}
 
 
 broadcastReceiver :: Client -> TChan Message -> Concurrent ()
 broadcastReceiver cl broadcastCh = forever $ do
-    atomically_ $ do
-        !msg
-            <- readTChan broadcastCh
-        sendMessage cl msg
+    !msg <- atomically_ $ readTChan broadcastCh
+    !() <- atomically_ $ sendMessage cl msg
+    return ()
 
 
 clientReceiver :: Server -> Client -> Concurrent ()
 clientReceiver srv cl = forever $ do
     !str <- clientGet srv cl
-    atomically_ $ sendMessage cl (Command str)
+    !() <- atomically_ $ sendMessage cl (Command str)
+    return ()
 --{-# NOINLINE clientReceiver #-}
 
 
 clientServer :: Server -> Group -> Client -> Concurrent ()
 clientServer srv gr cl@Client{..} = do
 
-    !msg
-        <- atomically_ $ readTChan clientChan
+    !msg <- atomically_ $ readTChan clientChan
     !continue <- handleMessage srv gr cl msg
-    when continue
-            (clientServer srv gr cl)
+    if continue
+        then clientServer srv gr cl
+        else return ()
     -- Left the room if continue == False.
 --{-# NOINLINE clientServer #-}
 
