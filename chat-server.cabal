@@ -110,6 +110,7 @@ executable client
     , yaml
     , unordered-containers
     , scientific
+    , binary
 
     , network >= 2.6
   hs-source-dirs:
