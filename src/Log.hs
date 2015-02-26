@@ -63,16 +63,14 @@ data AppStat = AppStat
 
 printStat :: AppStat -> CIO r ()
 printStat AppStat{..} = do
-    (cn, cl, gn, gc, gj, gl, se, l) <- atomically_ $ do
-        cn <- readTVar $ clientNew
-        cl <- readTVar $ clientLeft
-        gn <- readTVar $ groupNew
-        gc <- readTVar $ groupChat
-        gj <- readTVar $ groupJoin
-        gl <- readTVar $ groupLeft
-        se <- readTVar $ systemErrors
-        l <-  readTVar $ logging
-        return (cn, cl, gn, gc, gj, gl, se, l)
+    cn <- atomically_ $ readTVar $ clientNew
+    cl <- atomically_ $ readTVar $ clientLeft
+    gn <- atomically_ $ readTVar $ groupNew
+    gc <- atomically_ $ readTVar $ groupChat
+    gj <- atomically_ $ readTVar $ groupJoin
+    gl <- atomically_ $ readTVar $ groupLeft
+    se <- atomically_ $ readTVar $ systemErrors
+    l <-  atomically_ $ readTVar $ logging
     liftIO $ putStrLn $ mconcat
         [ "cl new: " <> expr cn <> ", "
         , "cl left: " <> expr cl <> ", "
