@@ -366,6 +366,38 @@ isEmptyTMVar tm = liftSTM $ S.isEmptyTMVar tm
 --mkWeakTMVar :: TMVar a -> CIO () () -> CIO r (Weak (TMVar a))
 --mkWeakTMVar tmv finalizer = liftIO $ S.mkWeakTMVar tmv (runCIO return finalizer)
 
+------------------------------------------------------------------------------------------
+-- | TQueue
+
+type TQueue = S.TQueue
+
+newTQueue :: CSTM r (TQueue a)
+newTQueue = liftSTM S.newTQueue
+
+newTQueueCIO :: CIO r (TQueue a)
+newTQueueCIO = liftIO S.newTQueueIO
+
+readTQueue :: TQueue a -> CSTM r a
+readTQueue q = liftSTM $ S.readTQueue q
+
+tryReadTQueue :: TQueue a -> CSTM r (Maybe a)
+tryReadTQueue q = liftSTM $ S.tryReadTQueue q
+
+peekTQueue :: TQueue a -> CSTM r a
+peekTQueue q = liftSTM $ S.peekTQueue q
+
+tryPeekTQueue :: TQueue a -> CSTM r (Maybe a)
+tryPeekTQueue q = liftSTM $ S.tryPeekTQueue q
+
+writeTQueue :: TQueue a -> a -> CSTM r ()
+writeTQueue q v = liftSTM $ S.writeTQueue q v
+
+unGetTQueue :: TQueue a -> a -> CSTM r ()
+unGetTQueue q v = liftSTM $ S.unGetTQueue q v
+
+isEmptyTQueue :: TQueue a -> CSTM r Bool
+isEmptyTQueue q = liftSTM $ S.isEmptyTQueue q
+
 
 -- | Async
 
