@@ -11,7 +11,7 @@ module App.Prelude
     , ShortByteString, toShort, fromShort
     , SB.null
     -- * Show
-    , expr
+    , expr, show
     -- * System.IO
     , putStr, putStrLn
     , hPutStr, hPutStrLn, hGetLine
@@ -25,7 +25,9 @@ module App.Prelude
     )
     where
 
-import           Prelude as P hiding (log, lookup, putStrLn, putStr, words, null)
+import           Prelude as P hiding (log, lookup, putStrLn, putStr, words, null, show)
+import qualified Prelude as P (show)
+
 import           Control.Applicative
 import           Control.Monad
 import           Control.Monad.IO.Class
@@ -42,11 +44,19 @@ import           Data.ByteString.Short (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString.Short as SB
 import qualified Data.Text as T
 import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import qualified Data.Binary as Bi
+import qualified Data.ByteString.Lazy as BSL
 
 import qualified System.IO as IO
 
 expr :: Show a => a -> ShortByteString
 expr = toShort . B.Char.pack . P.show
+-- TODO: Don't go through String
+--expr :: Bi.Binary a => a -> ShortByteString
+--expr = toShort . BSL.toStrict . Bi.encode
+
+show :: Show a => a -> ShortByteString
+show = toShort . B.Char.pack . P.show
 
 putStrLn :: ShortByteString -> IO ()
 putStrLn = B.Char.putStrLn . fromShort

@@ -64,6 +64,7 @@ executable server
     , aeson
     , unordered-containers
     , scientific
+    , binary
 
     , network >= 2.6
     , ekg

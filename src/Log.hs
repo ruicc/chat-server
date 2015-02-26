@@ -154,7 +154,7 @@ spawnErrorCollector erCh stCh stat = do
         collector :: ErrorChan -> CIO r ()
         collector ch = forever $ do
             !err <- atomically_ $ readTChan ch
-            liftIO $ putStrLn $ "Err: " <> expr err
+            liftIO $ putStrLn $ "Err: " <> show err
             atomically_ $ writeTChan stCh SystemError
 
     !_tid <- fork_ $ supervisor erCh stat
