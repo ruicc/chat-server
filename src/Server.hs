@@ -142,10 +142,19 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
 
     !broadcastCh <- atomically_ $ dupTChan groupBroadcastChan
 
-    -- Spawn 2 linked threads.
-    !() <- race_ (clientReceiver srv cl) (clientServer srv gr cl broadcastCh)
+    -- Spawn 3 linked threads.
+    !() <- race_
+            (broadcastReceiver cl broadcastCh)
+            (race_ (clientReceiver srv cl) (clientServer srv gr cl))
     return ()
 --{-# NOINLINE runClient #-}
+
+
+broadcastReceiver :: Client -> TChan Message -> Concurrent ()
+broadcastReceiver cl broadcastCh = forever $ do
+    !msg <- atomically_ $ readTChan broadcastCh
+    !() <- atomically_ $ sendMessage cl msg
+    return ()
 
 
 clientReceiver :: Server -> Client -> Concurrent ()
@@ -156,24 +165,15 @@ clientReceiver srv cl = forever $ do
 --{-# NOINLINE clientReceiver #-}
 
 
--- | Main loop of server to one client.
-clientServer :: Server -> Group -> Client -> TChan Message -> Concurrent ()
-clientServer srv gr cl@Client{..} broadcastCh = do
+clientServer :: Server -> Group -> Client -> Concurrent ()
+clientServer srv gr cl@Client{..} = do
 
-    !eMsg <- atomically_ $
-            -- NOTICE: LHS of `orElse` gets handled prior to RHS.
-            (Left <$> readTChan clientChan) `orElse` (Right <$> readTChan broadcastCh)
-
-    case eMsg :: Either Message Message of
-        Left msg -> do
-            !continue <- handleMessage srv gr cl msg
-            if continue
-                then clientServer srv gr cl broadcastCh
-                -- Leave group
-                else return ()
-        Right msg -> do
-            atomically_ $ sendMessage cl msg
-            clientServer srv gr cl broadcastCh
+    !msg <- atomically_ $ readTChan clientChan
+    !continue <- handleMessage srv gr cl msg
+    if continue
+        then clientServer srv gr cl
+        else return ()
+    -- Left the room if continue == False.
 --{-# NOINLINE clientServer #-}
 
 addClient :: Server -> Group -> Client -> Concurrent Bool
