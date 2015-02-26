@@ -23,22 +23,19 @@ runClientThread srv@Server{..} hdl = do
     !() <- liftIO $ hSetBuffering hdl LineBuffering
     !cl <- initClient srv hdl
     groupSelectRepl srv cl
---{-# NOINLINE runClientThread #-}
 
 
 groupSelectRepl :: Server -> Client -> Concurrent ()
-groupSelectRepl srv@Server{..} cl = liftIO loop
+groupSelectRepl srv@Server{..} cl = loop
   where
-    loop = forever $ do
-        runCIO (\a -> return a) $ do
-            !() <- showGroups srv cl
-            !mmsg <- getUserMessage srv cl
+    loop = do
+        !() <- showGroups srv cl
+        !mmsg <- getUserMessage srv cl
 
-            !() <- case mmsg of
-                Just msg -> handleClientMessage srv cl msg
-                Nothing -> return ()
-            return ()
---{-# NOINLINE groupSelectRepl #-}
+        case mmsg of
+            Just msg -> handleClientMessage srv cl msg
+            Nothing -> loop
+        loop
 
 handleClientMessage :: Server -> Client -> ClientMessage -> Concurrent ()
 handleClientMessage srv cl msg = case msg of
@@ -117,7 +114,6 @@ getUserMessage srv cl = do
             (!gid, _) <- readInt gid'
             return $ JoinGroup gid
         _ -> return Nothing
---{-# NOINLINE getUserMessage #-}
 
 initClient :: Server -> Handle -> Concurrent Client
 initClient srv hdl = do
@@ -126,7 +122,6 @@ initClient srv hdl = do
     clientPut srv cl $ "!init " <> (expr $ clientId cl) <> "\n"
 --    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
     return cl
---{-# NOINLINE initClient #-}
 
 
 notifyClient :: Server -> Group -> Client -> Concurrent ()
@@ -134,7 +129,6 @@ notifyClient srv@Server{..} gr@Group{..} cl@Client{..} = do
 
     -- Notice group to User
     clientPut srv cl $ "!event join " <> expr groupId <> "\n"
---{-# NOINLINE notifyClient #-}
 
 
 runClient :: Server -> Group -> Client -> Concurrent ()
@@ -147,7 +141,6 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
             (broadcastReceiver cl broadcastCh)
             (race_ (clientReceiver srv cl) (clientServer srv gr cl))
     return ()
---{-# NOINLINE runClient #-}
 
 
 broadcastReceiver :: Client -> TChan Message -> Concurrent ()
@@ -162,7 +155,6 @@ clientReceiver srv cl = forever $ do
     !str <- clientGet srv cl
     !() <- atomically_ $ sendMessage cl (Command str)
     return ()
---{-# NOINLINE clientReceiver #-}
 
 
 clientServer :: Server -> Group -> Client -> Concurrent ()
@@ -174,7 +166,6 @@ clientServer srv gr cl@Client{..} = do
         then clientServer srv gr cl
         else return ()
     -- Left the room if continue == False.
---{-# NOINLINE clientServer #-}
 
 addClient :: Server -> Group -> Client -> Concurrent Bool
 addClient srv@Server{..} gr@Group{..} cl@Client{..} = join $ atomically_ $ do
@@ -255,7 +246,6 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
                         ]
             Nothing -> do
                 return $ return ()
---{-# NOINLINE removeClient #-}
 
 handleMessage :: Server -> Group -> Client -> Message -> Concurrent Bool
 handleMessage srv@Server{..} gr@Group{..} cl@Client{..} msg = do
@@ -288,8 +278,6 @@ handleMessage srv@Server{..} gr@Group{..} cl@Client{..} msg = do
             return True
 
         _ -> error "Not impl yet"
---{-# NOINLINE handleMessage #-}
-
 
 spawnTimeoutCanceler :: Server -> Group -> CIO r ()
 spawnTimeoutCanceler srv gr = void $ fork_ $ do
