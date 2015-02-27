@@ -9,12 +9,12 @@ import qualified Control.Exception as E
 import qualified Control.Monad.Cont as C
 import           Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
 import           Data.Maybe
+import           Control.Concurrent.Structured
 
 import qualified Log as Log
 import           Types
 import           Exception
 import           GameController (spawnControlThread)
-import           Concurrent
 
 
 

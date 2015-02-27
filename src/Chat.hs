@@ -4,11 +4,11 @@ module Chat (runChatServer) where
 import           App.Prelude
 import           Network
 import           Text.Printf (printf)
+import           Control.Concurrent.Structured
 
 import qualified Log as Log
 import           Types
 import           Exception
-import           Concurrent
 import           Server (runClientThread)
 
 

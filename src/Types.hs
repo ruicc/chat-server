@@ -5,10 +5,10 @@ import App.Prelude as P
 import qualified Data.IntMap as IM
 import qualified Data.Unique as Uniq
 import qualified Control.Concurrent as Conc
+import           Control.Concurrent.Structured
 
 import qualified Log as Log
 import           Exception
-import           Concurrent
 
 ------------------------------------------------------------------------------------------
 -- | Types

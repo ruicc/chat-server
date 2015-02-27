@@ -1,25 +1,25 @@
 module Main where
 
-import Data.Monoid
-import Control.Monad
-import Control.Monad.IO.Class
-import Control.Monad.Trans.Class (lift)
+import           Data.Monoid
+import           Control.Monad
+import           Control.Monad.IO.Class
+import           Control.Monad.Trans.Class (lift)
 import qualified Control.Concurrent as C
 import qualified Control.Concurrent.STM as S
 import qualified Control.Concurrent.Async as A
 import qualified Control.Exception as E
-import System.IO as IO
+import           System.IO as IO
 import qualified Data.IntMap as IM
-import Network
+import           Control.Concurrent.Structured
+import           Network
 
-import App.Prelude as P
-import App.Config
-import Concurrent
-import Server
-import Types
-import Log
-import Exception
-import Utils
+import           App.Prelude as P
+import           App.Config
+import           Server
+import           Types
+import           Log
+import           Exception
+import           Utils
 
 main :: IO ()
 main = do

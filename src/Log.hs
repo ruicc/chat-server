@@ -6,7 +6,7 @@ import qualified Data.ByteString as B
 --import           Control.Concurrent.STM
 --import           Control.Exception
 
-import           Concurrent
+import           Control.Concurrent.Structured
 
 
 type LogChan = TChan ShortByteString

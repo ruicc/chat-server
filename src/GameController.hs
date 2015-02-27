@@ -4,7 +4,7 @@ import           App.Prelude as P
 --import qualified Control.Concurrent as Conc
 import qualified Log
 import           Types
-import           Concurrent
+import           Control.Concurrent.Structured
 
 spawnControlThread :: Server -> Group -> Concurrent ()
 spawnControlThread srv@Server{..} gr@Group{..} = do
