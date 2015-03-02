@@ -20,7 +20,7 @@ import           GameController (spawnControlThread)
 
 runClientThread :: Server -> Handle -> Concurrent ()
 runClientThread srv@Server{..} hdl = do
-    !() <- liftIO $ hSetBuffering hdl LineBuffering
+    liftIO $ hSetBuffering hdl LineBuffering
     !cl <- initClient srv hdl
     groupSelectRepl srv cl
 
@@ -29,12 +29,12 @@ groupSelectRepl :: Server -> Client -> Concurrent ()
 groupSelectRepl srv@Server{..} cl = loop
   where
     loop = do
-        !() <- showGroups srv cl
+        showGroups srv cl
         !mmsg <- getUserMessage srv cl
 
         case mmsg of
             Just msg -> handleClientMessage srv cl msg
-            Nothing -> loop
+            Nothing -> return ()
         loop
 
 handleClientMessage :: Server -> Client -> ClientMessage -> Concurrent ()
@@ -43,15 +43,13 @@ handleClientMessage srv cl msg = case msg of
 
     NewGroup name capacity time timeout -> do
         !gr <- createGroupCIO srv name capacity time timeout
-        !() <- joinAndThen srv gr cl
-        return ()
+        joinAndThen srv gr cl
 
     JoinGroup gid -> do
         !mgr <- atomically_ $ getGroup srv gid
         case mgr of
             Just gr -> do
-                !() <- joinAndThen srv gr cl
-                return ()
+                joinAndThen srv gr cl
             Nothing -> return ()
 
 createGroupCIO :: Server -> GroupName -> GroupCapacity -> PlayTime -> Timeout -> CIO r Group
@@ -59,8 +57,8 @@ createGroupCIO srv name cap time to = do
     !gid <- liftIO newUniqueInt
     !ts <- liftIO Time.getUnixTimeAsInt
     !gr <- atomically_ $ createGroup srv gid name cap time ts to
-    !() <- tick srv Log.GroupNew
-    !() <- spawnTimeoutCanceler srv gr
+    tick srv Log.GroupNew
+    spawnTimeoutCanceler srv gr
     return gr
 
 joinAndThen :: Server -> Group -> Client -> Concurrent ()
@@ -72,13 +70,11 @@ joinAndThen srv gr cl = mask_ $ \restore -> do
                 finalizer = removeClient srv cl gr
                 clientErrorHandler = \ (_ :: ClientException) -> return ()
                 action = do
-                    !() <- notifyClient srv gr cl
-                    !() <- runClient srv gr cl
-                    return ()
-            !() <- restore action
+                    notifyClient srv gr cl
+                    runClient srv gr cl
+            restore action
                     `catch_` clientErrorHandler
                     `finally_` finalizer
-            return ()
         else
             return ()
 
@@ -137,24 +133,21 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
     !broadcastCh <- atomically_ $ dupTChan groupBroadcastChan
 
     -- Spawn 3 linked threads.
-    !_ <- race_
+    void $ race_
             (broadcastReceiver cl broadcastCh)
             (race_ (clientReceiver srv cl) (clientServer srv gr cl))
-    return ()
 
 
 broadcastReceiver :: Client -> TChan Message -> Concurrent ()
 broadcastReceiver cl broadcastCh = forever $ do
     !msg <- atomically_ $ readTChan broadcastCh
-    !() <- atomically_ $ sendMessage cl msg
-    return ()
+    atomically_ $ sendMessage cl msg
 
 
 clientReceiver :: Server -> Client -> Concurrent ()
 clientReceiver srv cl = forever $ do
     !str <- clientGet srv cl
-    !() <- atomically_ $ sendMessage cl (Command str)
-    return ()
+    atomically_ $ sendMessage cl (Command str)
 
 
 clientServer :: Server -> Group -> Client -> Concurrent ()
@@ -232,7 +225,7 @@ removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
                         Just onRemove -> onRemove
                         Nothing -> return ()
 
-                    !() <- clientPut srv cl $ mconcat
+                    clientPut srv cl $ mconcat
                         [ "!event leave"
                         , "\n"
                         ]

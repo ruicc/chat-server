@@ -183,16 +183,16 @@ newClient hdl = do
 clientGet :: Server -> Client -> CIO r ShortByteString
 clientGet srv@Server{..} Client{..} = do
     !str <- rstrip <$> (liftIO $ hGetLine clientHandle)
-    !() <- liftIO $ hFlush clientHandle
-    !() <- logger srv $ "Rcv :: " <> str
+    liftIO $ hFlush clientHandle
+    logger srv $ "Rcv :: " <> str
     return str
 --{-# NOINLINE clientGet #-}
 
 clientPut :: Server -> Client -> ShortByteString -> CIO r ()
 clientPut srv Client{..} str = do
-    !() <- liftIO $ hPutStr clientHandle str
-    !() <- liftIO $ hFlush clientHandle
-    !() <- logger srv $ "Snd >> " <> str
+    liftIO $ hPutStr clientHandle str
+    liftIO $ hFlush clientHandle
+    logger srv $ "Snd >> " <> str
     return ()
 --{-# NOINLINE clientPut #-}
 
