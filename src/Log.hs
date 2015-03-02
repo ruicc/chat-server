@@ -16,7 +16,7 @@ spawnLogger erCh stCh logCh = do
     let
         supervisor ch = do
             as :: Async ()
-                <- async (logger ch)
+                <- async_ (logger ch)
             res :: Either SomeException ()
                 <- try_ $ wait as
             case res of
@@ -103,7 +103,7 @@ spawnStatAggregator erCh stCh stat = do
         supervisor :: StatChan -> AppStat -> CIO r ()
         supervisor ch astat = do
             as :: Async ()
-                <- async (aggregator ch astat)
+                <- async_ (aggregator ch astat)
             res :: Either SomeException ()
                 <- try_ $ wait as
 
@@ -140,7 +140,7 @@ spawnErrorCollector erCh stCh stat = do
     let
         supervisor ch tsum = do
             as :: Async ()
-                <- async (collector ch)
+                <- async_ (collector ch)
             res :: Either SomeException ()
                 <- try_ $ wait as
             case res of

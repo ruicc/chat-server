@@ -137,7 +137,7 @@ runClient srv@Server{..} gr@Group{..} cl@Client{..} = do
     !broadcastCh <- atomically_ $ dupTChan groupBroadcastChan
 
     -- Spawn 3 linked threads.
-    !() <- race_
+    !_ <- race_
             (broadcastReceiver cl broadcastCh)
             (race_ (clientReceiver srv cl) (clientServer srv gr cl))
     return ()
