@@ -5,16 +5,17 @@ CORES = 4
 make:
 	# Here write a command you want to execute frequently!
 
-cabal.sandbox.config:
+first:
 	cabal sandbox init
-	cabal install --only-dependencies
+	make tmp/structured-concurrent
+	cabal install -j --only-dependencies --force-reinstalls
 
-tmp/structured-concurrent: cabal.sandbox.config
+tmp/structured-concurrent:
 	mkdir -p tmp
 	git clone https://github.com/ruicc/structured-concurrent.git tmp/structured-concurrent
 	cabal sandbox add-source tmp/structured-concurrent
 
-build: cabal.sandbox.config tmp/structured-concurrent
+build:
 	cabal build $(TARGET)
 
 core:

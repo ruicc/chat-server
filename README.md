@@ -18,8 +18,12 @@ How to use
 git-clone and execute `make build && make server`.
 
 ```bash
-$ make build && make server
+$ make first && make server
 ```
+
+Type Control-C when you want to stop.
+
+And `make server` makes chat-server run again.
 
 
 ## Connect with telnet
