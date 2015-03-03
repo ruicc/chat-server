@@ -14,6 +14,9 @@ tmp/structured-concurrent: cabal.sandbox.config
 	git clone https://github.com/ruicc/structured-concurrent.git tmp/structured-concurrent
 	cabal sandbox add-source tmp/structured-concurrent
 
+build: cabal.sandbox.config tmp/structured-concurrent
+	cabal build $(TARGET)
+
 core:
 	cabal build $(TARGET) -- --ghc-options="-O2 -ddump-simpl -fforce-recomp --make -dsuppress-coercions" > core.$(TARGET)
 
@@ -32,7 +35,7 @@ prof:
 	cabal run $(TARGET) -- +RTS -N$(CORES) -p -s -h -i1
 	make tops
 
-run: tmp/structured-concurrent
+run: cabal.sandbox.config tmp/structured-concurrent
 	cabal run $(TARGET) -- +RTS -N$(CORES)
 
 ps:
