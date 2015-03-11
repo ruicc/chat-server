@@ -212,5 +212,22 @@ executable mem-prof
   default-language:
     Haskell2010
 
+test-suite group
+  type:                exitcode-stdio-1.0
+  main-is:             group.hs
+  default-extensions:  ScopedTypeVariables
+                     , TypeFamilies
+                     , RecordWildCards
+                     , MultiParamTypeClasses
+                     , FlexibleInstances
+  hs-source-dirs:      tests
+  build-depends:       base             >=4.7  && <4.8
+                     , transformers
+                     , stm
+                     , containers
+                     , structured-concurrent
+                     , structured-concurrent-object
+  ghc-options:         -Wall
+  default-language:    Haskell2010
 
 -- vim: expandtab tabstop=2 softtabstop=2 shiftwidth=2
