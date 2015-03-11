@@ -19,14 +19,13 @@ build:
 	cabal build $(TARGET)
 
 core:
-	cabal build $(TARGET) -- --ghc-options="-O2 -ddump-simpl -fforce-recomp --make -dsuppress-coercions" > core.$(TARGET)
+	cabal build $(TARGET) -- --ghc-options="-O2 -ddump-simpl -fforce-recomp --make -dsuppress-coercions" > $(TARGET).core
 
 conf:
 	cabal configure --enable-library-profiling --enable-executable-profiling --enable-tests --enable-benchmarks
 
 clean:
 	cabal clean
-	rm -f core.$(TARGET)
 	rm -f $(TARGET).*
 
 repl:
