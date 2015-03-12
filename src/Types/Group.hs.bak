@@ -1,0 +1,264 @@
+module Group (spawnGroupThread) where
+
+import           App.Prelude as P
+import qualified App.Time as Time
+import           Data.Unique as Uniq
+--import qualified Control.Concurrent as Conc
+import qualified Log
+import           Types
+import           Control.Concurrent.Structured
+
+data Group = Group
+    { groupId :: GroupId
+    , groupName :: GroupName
+    , groupCapacity :: Int
+    , groupCreatedAt :: Int -- ^ UnixTime
+    , groupTimeout :: Int -- ^ Wait time (sec)
+--    , groupThreadId :: TVar ThreadId
+
+    -- Mutable values
+    , groupMembers :: TVar (IM.IntMap Client)
+    , groupMemberCount :: TVar Int
+    , groupBroadcastChan :: TChan Message -- ^ Write Only channel for group broadcast
+    , groupHistory :: TVar [Message]
+
+    -- Game Data
+    , groupGame :: TVar Game
+--    , groupMethods :: GroupMethods
+--    , groupCanceler :: TMVar ThreadId
+--    , groupGameController :: TMVar ThreadId
+    }
+
+data Game = Game
+    { gameStatus :: GameStatus
+    , gameStage :: GameStage
+    , gamePlayTime :: Int -- ^ Play time (sec)
+    , deadClients :: [Client]
+    , gameSessionData :: TVar (Map.Map ClientId GameClientConfig)
+    }
+
+data GameStatus = Waiting | Preparing | Playing | Result | GroupDeleted
+    deriving (Eq)
+
+data GameClientConfig = GameClientConfig
+    { gccColor :: Int
+    }
+
+data GameStage = Morning | Night
+
+data GroupMessages = GroupMessages
+--    { addMember
+--    , removeMember
+--    ,
+--    }
+
+
+newGroup
+    :: GroupId
+    -> GroupName
+    -> GroupCapacity
+    -> PlayTime
+    -> Timestamp
+    -> Timeout
+    -> CSTM r Group -- CSTM r???  -> Yes. Group(Server) is shared value.
+newGroup gid name capacity playTime ts timeout = do
+    clientMap <- newTVar IM.empty
+    cnt <- newTVar 0
+    bch <- newBroadcastTChan
+    history <- newTVar []
+    gameSt <- newTVar $ Game Waiting Morning playTime []
+    mTid <- newEmptyTMVar
+    mTid2 <- newEmptyTMVar
+    sess <- newTVar Map.empty
+    return $ Group
+       { groupId             = gid
+       , groupName           = name
+       , groupCapacity       = capacity
+       , groupGameStage      = Morning -- FIXME: randomize
+
+       , groupCreatedAt      = ts
+       , groupTimeout        = timeout
+       , groupMembers        = clientMap
+       , groupMemberCount    = cnt
+       , groupBroadcastChan  = bch
+       , groupHistory        = history
+
+       , groupGame           = gameSt
+       }
+
+getGroup :: Server -> GroupId -> CSTM r (Maybe Group)
+getGroup Server{..} gid = do
+    groupMap <- readTVar serverGroups
+    return $ IM.lookup gid groupMap
+
+getAllGroups :: Server -> CSTM r [(GroupId, Group)]
+getAllGroups Server{..} = do
+    groupMap <- readTVar serverGroups
+    return $ IM.toList groupMap
+
+createGroup
+    :: Server
+    -> GroupId
+    -> GroupName
+    -> GroupCapacity
+    -> PlayTime
+    -> Timestamp
+    -> Timeout
+    -> CSTM Group Group
+createGroup Server{..} gid name capacity playTime ts timeout = do
+    gr <- newGroup gid name capacity playTime ts timeout
+    modifyTVar' serverGroups $ IM.insert (groupId gr) gr
+    return gr
+
+-- FIXME: basic operation and high-level operation should be separated..
+deleteGroup :: Server -> Group -> CSTM r (Concurrent ())
+deleteGroup srv@Server{..} gr@Group{..} = do
+    members :: [(ClientId, Client)]
+        <- IM.toList <$> readTVar groupMembers
+    changeGameStatus gr GroupDeleted
+    modifyTVar' serverGroups $ IM.delete groupId
+
+    return $ do -- CIO ()
+        forM_ members $ \ (cid, Client{..}) -> do
+            throwTo clientThreadId KickedFromRoom -- TODO: Kick理由
+
+
+killCanceler :: Group -> CSTM r (Concurrent ())
+killCanceler Group{..} = do
+    mtid <- tryReadTMVar groupCanceler
+    return $ do
+        case mtid of
+            Just tid -> killThread tid
+            Nothing -> return ()
+
+getClient :: ClientId -> Group -> CSTM r (Maybe Client)
+getClient cid Group{..} = do
+    clientMap <- readTVar groupMembers
+    return $ IM.lookup cid clientMap
+
+cancelWaiting :: Server -> Group -> CIO () ()
+cancelWaiting srv@Server{..} gr@Group{..} = join $ atomically_ $ do -- CSTM
+    -- Check GameStatus
+    gameSt <- gameStatus <$> readTVar groupGame
+    case gameSt of
+        Waiting -> do
+            onRemove <- deleteGroup srv gr
+            return $ do -- CIO
+                onRemove
+                logger srv $ "Canceler removed Group<" <> expr groupId <> ">."
+
+        _       -> return $ do
+            logger srv $ "Canceler fired, but do nothing"
+            return ()
+
+changeGameStatus :: Group -> GameStatus -> CSTM r ()
+changeGameStatus Group{..} gst = do
+    game <- readTVar groupGame
+    writeTVar groupGame game { gameStatus = gst }
+
+getGameStatus :: Group -> CSTM r GameStatus
+getGameStatus Group{..} = do
+    game <- readTVar groupGame
+    return $ gameStatus game
+
+
+--------------------------------------------------------------------------------
+
+spawnGroupThread
+    :: Server
+    -> GroupName
+    -> GroupCapacity
+    -> PlayTime
+    -> Timeout
+    -> CIO r GroupMessages
+spawnGroupThread srv@Server{..} name capacity playtime timeout = do
+    gid <- Uniq.hashUnique <$> liftIO Uniq.newUnique
+    ts <- liftiO Time.getUnixTimeAsInt
+    group <- atomically_ $ newGroup gid name capacity playtime ts timeout
+    _tid <- fork_ $ groupThread srv group
+    return GroupMessages -- FIXME
+
+
+groupThread :: Server -> Group -> Concurrent ()
+groupThread srv gr = do
+    -- TODO: timeout canceler
+    groupREPL srv gr
+
+groupREPL :: Server -> Group -> CIO r ()
+groupREPL srv gr = loop
+  where
+    loop = do
+        status <- atomically_ $ getGameStatus gr
+        dispatch status
+                `catch_` \ (e :: SomeException) -> errorCollector srv e
+        loop
+
+    dispatch st = case st of
+        Waiting      -> handleWaiting srv gr
+        Preparing    -> handlePrepareing srv gr
+        Playing      -> handlePlaying srv gr
+        Result       -> handleResult srv gr
+        GroupDeleted -> handleGroupDeleted srv gr
+
+-- | Group is waiting until capacity get full.
+handleWaiting :: Server -> Group -> CIO r ()
+handleWaiting srv gr =
+    atomically_ $ do
+        gameStatus <- getGameStatus gr
+        case gameState of
+            Waiting -> retry -- block until gameState get changed.
+            _ -> return ()
+
+-- | Group members to play game get gathered.
+--   Members exchange for each configurations.
+handlePrepareing :: Server -> Group -> CIO r ()
+handlePrepareing srv gr = do
+    configs <- collectMemberConfig srv
+    broadcastConfigs gr configs
+    changeGameStatus gr Playing
+
+handlePlaying :: Server -> Group -> CIO r ()
+handlePlaying srv gr = do
+    playtime <- atomically_ $ do
+        game <- readTVar $ groupGame gr
+        gamePlayTime game
+    threadDelay $ playtime * 1000 * 1000
+    -- TODO: Notify members that game is over??
+    changeGameStatus gr Result
+
+handleResult :: Server -> Group -> CIO r ()
+handleResult = undefined
+
+handleGroupDeleted :: Server -> Group -> CIO r ()
+handleGroupDelete = undefined
+
+
+
+
+
+--    mask return $ \ restore -> do
+----        tid <- myThreadId
+--        atomically_ $ do
+--            sendBroadcast gr (Command "!begin")
+--            changeGameStatus gr Playing
+--        logger srv $ "Group<" <> expr groupId <> "> Game begins!"
+--
+--        restore (playGame srv gr) `catch_` \ (e :: SomeException) -> do
+--            -- Cleanup
+--            onRemove <- atomically_ $ do
+--                changeGameStatus gr GroupDeleted
+--                deleteGroup srv gr
+--            onRemove
+--            errorCollector srv e
+--            logger srv $ "An Error occured on playing!"
+
+--playGame :: Server -> Group -> Concurrent ()
+--playGame srv@Server{..} gr@Group{..} = do
+--    threadDelay $ groupPlayTime * 1000 * 1000
+--    onRemove <- atomically_ $ do
+--        sendBroadcast gr (Command "!finish")
+--        changeGameStatus gr GroupDeleted
+--        deleteGroup srv gr
+--    onRemove
+--    logger srv $ "Group<" <> expr groupId <> "> Game finished!"
+

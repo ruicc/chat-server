@@ -212,9 +212,9 @@ executable mem-prof
   default-language:
     Haskell2010
 
-test-suite group
+test-suite group-proto
   type:                exitcode-stdio-1.0
-  main-is:             group.hs
+  main-is:             group-proto.hs
   default-extensions:  ScopedTypeVariables
                      , TypeFamilies
                      , RecordWildCards
@@ -230,4 +230,27 @@ test-suite group
   ghc-options:         -Wall
   default-language:    Haskell2010
 
+test-suite types
+  type:                exitcode-stdio-1.0
+  main-is:             types.hs
+  default-extensions:  ScopedTypeVariables
+                     , OverloadedStrings
+                     , TypeFamilies
+                     , RecordWildCards
+                     , MultiParamTypeClasses
+                     , FlexibleInstances
+  hs-source-dirs:      tests, src
+  build-depends:       base             >=4.7  && <4.8
+                     , transformers
+                     , stm
+
+                     , containers
+                     , bytestring
+                     , text
+                     , binary
+
+                     , structured-concurrent
+                     , structured-concurrent-object
+  ghc-options:         -Wall
+ 
 -- vim: expandtab tabstop=2 softtabstop=2 shiftwidth=2
