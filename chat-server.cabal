@@ -50,6 +50,8 @@ executable server
     , TypeFamilies
     , CPP
     , BangPatterns
+    , MultiParamTypeClasses
+    , FlexibleInstances
 
   build-depends:
       base >= 4.7 && <4.8
@@ -72,6 +74,7 @@ executable server
     , ekg
 
     , structured-concurrent
+    , structured-concurrent-object
 
   hs-source-dirs:
     src

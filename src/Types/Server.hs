@@ -1,5 +1,11 @@
 module Types.Server where
 
+import           App.Prelude
+import           Control.Concurrent.Structured
+import qualified Data.IntMap as IM
+
+import Log
+import Types.Group
 
 
 data Server = Server
@@ -28,4 +34,3 @@ tick Server{..} ev = atomically_ $ writeTChan statChan ev
 
 errorCollector :: Server -> SomeException -> CIO r ()
 errorCollector Server{..} e = atomically_ $ writeTChan errorChan e
-

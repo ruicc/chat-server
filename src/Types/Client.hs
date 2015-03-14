@@ -1,5 +1,6 @@
 module Types.Client where
 
+import           Prelude as P
 import           Control.Applicative ((<$>))
 import           Control.Concurrent
 import           Control.Concurrent.STM

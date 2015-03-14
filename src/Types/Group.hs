@@ -1,5 +1,6 @@
 module Types.Group where
 
+import           Prelude as P hiding ((!))
 import           Control.Applicative
 import           Control.Monad.Trans.Cont (ContT(..))
 import           Control.Monad.IO.Class (liftIO)
@@ -150,7 +151,7 @@ instance ObjectLike IO Group where
     type OClass Group = Class GMessage GReply
 
 --    new cl = Group <$> new cl
-    gr ! msg = groupObject gr ! msg
+    (!) gr msg = groupObject gr ! msg
     gr !? msg = groupObject gr !? msg
     kill gr = kill $ groupObject gr
 
@@ -160,7 +161,7 @@ instance ObjectLike (ContT r IO) Group where
     type OClass Group = Class GMessage GReply
 
 --    new cl = liftIO $ Group <$> new cl
-    gr ! msg = liftIO $ groupObject gr ! msg
+    (!) gr msg = liftIO $ groupObject gr ! msg
     gr !? msg = liftIO $ (liftIO <$> groupObject gr !? msg)
     kill gr = liftIO $ kill $ groupObject gr
 
@@ -201,17 +202,19 @@ groupClass =
                             _ -> return False
 
                 case msg of
-                    AddMember mid client -> do
+                    AddMember cid client -> do
+                        -- TODO: Check capacity, state and non-membership
+                        -- TODO: Action when member full
                         atomically $ modifyTVar' selfState
-                                (\ dat -> dat { groupMembers = Map.insert mid client (groupMembers dat) })
+                                (\ dat -> dat { groupMembers = Map.insert cid client (groupMembers dat) })
                         return (AddMemberR True, self)
-                    RemoveMember mid -> do
+                    RemoveMember cid -> do
                         atomically $ modifyTVar' selfState
-                                (\ dat -> dat { groupMembers = Map.delete mid (groupMembers dat) })
+                                (\ dat -> dat { groupMembers = Map.delete cid (groupMembers dat) })
                         return (RemoveMemberR True, self)
-                    GetMember mid -> do
+                    GetMember cid -> do
                         dat <- getData
-                        return (GetMemberR $ Map.lookup mid (groupMembers dat), self)
+                        return (GetMemberR $ Map.lookup cid (groupMembers dat), self)
                     GetAllMembers -> do
                         mids :: [ClientId]
                             <- (map fst . Map.toList . groupMembers) <$> getData

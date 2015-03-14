@@ -2,6 +2,7 @@ module Types.Message
     ( Message(..), ClientMessage(..)
     ) where
 
+import           Prelude as P
 import qualified Data.ByteString.Short as SBS
 
 

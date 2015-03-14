@@ -14,7 +14,6 @@ import           Control.Concurrent.Structured
 import qualified Log as Log
 import           Types
 import           Exception
-import           GameController (spawnControlThread)
 
 
 
@@ -53,12 +52,22 @@ handleClientMessage srv cl msg = case msg of
             Nothing -> return ()
 
 createGroupCIO :: Server -> GroupName -> GroupCapacity -> PlayTime -> Timeout -> CIO r Group
-createGroupCIO srv name cap time to = do
+createGroupCIO srv name cap time timeout = do
     !gid <- liftIO newUniqueInt
     !ts <- liftIO Time.getUnixTimeAsInt
-    !gr <- atomically_ $ createGroup srv gid name cap time ts to
+    let
+        grVal = GroupValue
+            { gvGroupId = gid
+            , gvGroupName = name
+            , gvGroupCapacity = cap
+            , gvGroupCreatedAt = ts
+            , gvGroupTimeout = timeout
+            }
+    gr <- liftIO $ newGroup grVal
+    atomically_ $ registerGroup srv gr
     tick srv Log.GroupNew
-    spawnTimeoutCanceler srv gr
+    -- TODO: Cancel waiting and remove group
+
     return gr
 
 joinAndThen :: Server -> Group -> Client -> Concurrent ()
@@ -66,15 +75,13 @@ joinAndThen srv gr cl = mask_ $ \restore -> do
     !joinSuccess <- addClient srv gr cl
     if joinSuccess
         then do
-            let
-                finalizer = removeClient srv cl gr
-                clientErrorHandler = \ (_ :: ClientException) -> return ()
-                action = do
+            let action = do
                     notifyClient srv gr cl
                     runClient srv gr cl
+
             restore action
-                    `catch_` clientErrorHandler
-                    `finally_` finalizer
+                    `catch_` \ (_ :: ClientException) -> return ()
+                    `finally_` removeClient srv gr cl
         else
             return ()
 
@@ -113,7 +120,7 @@ getUserMessage srv cl = do
 
 initClient :: Server -> Handle -> Concurrent Client
 initClient srv hdl = do
-    !cl <- newClient hdl
+    !cl <- liftIO $ newClient hdl
     tick srv $ Log.ClientNew
     clientPut srv cl $ "!init " <> (expr $ clientId cl) <> "\n"
 --    clientPut cl $ "{\"clientId\":" <> (expr $ clientId cl) <> "}\n"
@@ -124,7 +131,7 @@ notifyClient :: Server -> Group -> Client -> Concurrent ()
 notifyClient srv@Server{..} gr@Group{..} cl@Client{..} = do
 
     -- Notice group to User
-    clientPut srv cl $ "!event join " <> expr groupId <> "\n"
+    clientPut srv cl $ "!event join " <> expr (groupId gr) <> "\n"
 
 
 runClient :: Server -> Group -> Client -> Concurrent ()
@@ -160,85 +167,85 @@ clientServer srv gr cl@Client{..} = do
         else return ()
     -- Left the room if continue == False.
 
-addClient :: Server -> Group -> Client -> Concurrent Bool
-addClient srv@Server{..} gr@Group{..} cl@Client{..} = join $ atomically_ $ do
+--addClient srv@Server{..} gr@Group{..} cl@Client{..} = join $ atomically_ $ do
+--
+--    mCnt <- runMaybeT $ do
+--        !cnt <- MaybeT $ Just <$> readTVar groupMemberCount
+--        guard $ cnt < groupCapacity
+--
+--        !gameSt <- MaybeT $ Just <$> getGameState gr
+--        guard $ gameSt == Waiting
+--
+--        !clientMap <- MaybeT $ Just <$> readTVar groupMembers
+--        guard $ not (IM.member clientId clientMap)
+--
+--        return cnt
+--
+--    case mCnt of
+--        Just cnt -> do
+--            let
+--                gotFull = cnt + 1 == groupCapacity
+--
+--            modifyTVar' groupMembers $ IM.insert clientId cl
+--            modifyTVar' groupMemberCount succ
+--            when gotFull
+--                    $ changeGameState gr Preparing
+--
+--            return $ do -- CIO ()
+--                when gotFull $ do
+--                    -- Members are gathered.
+--                    -- TODO: Is Transaction required to get canceler's ThreadId?
+--                    killThread =<< (atomically_ $ readTMVar groupCanceler)
+--                    -- TODO: Exception Handling, supervisored threading.
+--                    spawnControlThread srv gr
+--                logger srv $ mconcat
+--                    [ "Client<" <> expr clientId <> "> joind Group<" <> expr groupId <> ">."
+--                    , " Room members are <" <> (expr $ cnt + 1) <> ">."
+--                    ]
+--                return True
+--        Nothing -> return $ return False
 
-    mCnt <- runMaybeT $ do
-        !cnt <- MaybeT $ Just <$> readTVar groupMemberCount
-        guard $ cnt < groupCapacity
-
-        !gameSt <- MaybeT $ Just <$> getGameState gr
-        guard $ gameSt == Waiting
-
-        !clientMap <- MaybeT $ Just <$> readTVar groupMembers
-        guard $ not (IM.member clientId clientMap)
-
-        return cnt
-
-    case mCnt of
-        Just cnt -> do
-            let
-                gotFull = cnt + 1 == groupCapacity
-
-            modifyTVar' groupMembers $ IM.insert clientId cl
-            modifyTVar' groupMemberCount succ
-            when gotFull
-                    $ changeGameState gr BeforePlay
-
-            return $ do -- CIO ()
-                when gotFull $ do
-                    -- Members are gathered.
-                    -- TODO: Is Transaction required to get canceler's ThreadId?
-                    killThread =<< (atomically_ $ readTMVar groupCanceler)
-                    -- TODO: Exception Handling, supervisored threading.
-                    spawnControlThread srv gr
-                logger srv $ mconcat
-                    [ "Client<" <> expr clientId <> "> joind Group<" <> expr groupId <> ">."
-                    , " Room members are <" <> (expr $ cnt + 1) <> ">."
-                    ]
-                return True
-        Nothing -> return $ return False
 
 
-removeClient :: Server -> Client -> Group -> Concurrent ()
-removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
-    join $ atomically_ $ do
-        !mcl <- getClient clientId gr
-        case mcl of
-            Just _ -> do
-                !cnt <- readTVar groupMemberCount
-                modifyTVar' groupMembers (IM.delete clientId)
-                modifyTVar' groupMemberCount pred
-
-                sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
-
-                mOnRemove <- if (cnt == 1)
-                    then do
-                        onRemove <- deleteGroupCIO srv gr
-                        return $ Just onRemove
-                    else return Nothing
-
-                return $ do
-                    case mOnRemove of
-                        -- Kick all members
-                        -- Kill timeout canceller
-                        Just onRemove -> onRemove
-                        Nothing -> return ()
-
-                    clientPut srv cl $ mconcat
-                        [ "!event leave"
-                        , "\n"
-                        ]
---                        [ "{\"event\":\"leave-room\"}"
+--removeClient :: Server -> Client -> Group -> Concurrent ()
+--removeClient srv@Server{..} cl@Client{..} gr@Group{..} = do
+--    join $ atomically_ $ do
+--        !mcl <- getClient clientId gr
+--        case mcl of
+--            Just _ -> do
+--                !cnt <- readTVar groupMemberCount
+--                modifyTVar' groupMembers (IM.delete clientId)
+--                modifyTVar' groupMemberCount pred
+--
+--                sendBroadcast gr (Notice $ "Client<" <> expr clientId <> "> is left.")
+--
+--                mOnRemove <- if (cnt == 1)
+--                    then do
+--                        onRemove <- deleteGroupCIO srv gr
+--                        return $ Just onRemove
+--                    else return Nothing
+--
+--                return $ do
+--                    case mOnRemove of
+--                        -- Kick all members
+--                        -- Kill timeout canceller
+--                        Just onRemove -> onRemove
+--                        Nothing -> return ()
+--
+--                    clientPut srv cl $ mconcat
+--                        [ "!event leave"
 --                        , "\n"
 --                        ]
-                    tick srv Log.GroupLeft
-                    logger srv $ mconcat
-                        [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
-                        , " Room members are <" <> (expr $ cnt - 1) <> ">."
-                        ]
-            Nothing -> do
-                return $ return ()
+----                        [ "{\"event\":\"leave-room\"}"
+----                        , "\n"
+----                        ]
+--                    tick srv Log.GroupLeft
+--                    logger srv $ mconcat
+--                        [ "Client<" <> expr clientId <> "> is removed from Group<" <> expr groupId <> ">."
+--                        , " Room members are <" <> (expr $ cnt - 1) <> ">."
+--                        ]
+--            Nothing -> do
+--                return $ return ()
 
 handleMessage :: Server -> Group -> Client -> Message -> Concurrent Bool
 handleMessage srv@Server{..} gr@Group{..} cl@Client{..} msg = do
@@ -272,20 +279,20 @@ handleMessage srv@Server{..} gr@Group{..} cl@Client{..} msg = do
 
         _ -> error "Not impl yet"
 
-spawnTimeoutCanceler :: Server -> Group -> CIO r ()
-spawnTimeoutCanceler srv gr = void $ fork_ $ do
-    !tid <- myThreadId
-    atomically_ $ putTMVar (groupCanceler gr) tid
-    threadDelay $ groupTimeout gr * 1000 * 1000
-    cancelWaiting srv gr
+--spawnTimeoutCanceler :: Server -> Group -> CIO r ()
+--spawnTimeoutCanceler srv gr = void $ fork_ $ do
+--    !tid <- myThreadId
+--    atomically_ $ putTMVar (groupCanceler gr) tid
+--    threadDelay $ groupTimeout gr * 1000 * 1000
+--    cancelWaiting srv gr
 
 
-deleteGroupCIO :: Server -> Group -> CSTM r (Concurrent ())
-deleteGroupCIO srv gr = do
-    onRemove <- deleteGroup srv gr
-    kill <- killCanceler gr
-    return $ do
-        onRemove
-        -- Killing the canceler thread must be done at last
-        -- so that the canceler thread itself can call deleteGroupCIO.
-        kill
+--deleteGroupCIO :: Server -> Group -> CSTM r (Concurrent ())
+--deleteGroupCIO srv gr = do
+--    onRemove <- deleteGroup srv gr
+--    kill <- killCanceler gr
+--    return $ do
+--        onRemove
+--        -- Killing the canceler thread must be done at last
+--        -- so that the canceler thread itself can call deleteGroupCIO.
+--        kill
