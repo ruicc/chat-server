@@ -119,7 +119,8 @@ initGroupMutable stage playtime = GroupMutable
 
 data GMessage
     -- Member CRUD
-    = AddMember ClientId Client
+    = Initialize
+    | AddMember ClientId Client
     | RemoveMember ClientId
     | GetMember ClientId
     | GetAllMembers
@@ -132,7 +133,8 @@ data GMessage
     | PutSessionData GameSessionData
 
 data GReply
-    = AddMemberR Bool
+    = InitializeR
+    | AddMemberR Bool
     | RemoveMemberR Bool
     | GetMemberR (Maybe Client)
     | GetAllMembersR [ClientId]
@@ -170,22 +172,22 @@ instance ObjectLike (ContT r IO) Group where
 
 newGroup
     :: GroupValue
+    -> GameStage
+    -> PlayTime
     -> IO Group
-newGroup gVal = do
-    obj <- new $ groupClass
+newGroup gVal stage playtime = do
+    obj <- new $ groupClass stage playtime
     ch <- atomically newBroadcastTChan
-    return $ Group
-        { groupValue = gVal
-        , groupBroadcastChan = ch
-        , groupObject = obj
-        }
+    let gr = Group
+            { groupValue = gVal
+            , groupBroadcastChan = ch
+            , groupObject = obj
+            }
+    gr ! Initialize
+    return gr
 
-groupClass :: Class GMessage GReply GroupMutable
-groupClass =
-    let
-        stage = Morning
-        playtime = 120
-    in
+groupClass :: GameStage -> PlayTime -> Class GMessage GReply GroupMutable
+groupClass stage playtime =
         Class
             { classInitializer = return $ initGroupMutable stage playtime
             , classFinalizer = (\_st -> putStrLn "Cleanup")
@@ -202,6 +204,8 @@ groupClass =
                             _ -> return False
 
                 case msg of
+                    Initialize -> do
+                        return (InitializeR, self)
                     AddMember cid client -> do
                         -- TODO: Check capacity, state and non-membership
                         -- TODO: Action when member full

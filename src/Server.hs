@@ -4,11 +4,11 @@ import           App.Prelude
 import qualified App.Time as Time
 
 import           Data.List (intersperse)
-import qualified Data.IntMap as IM
-import qualified Control.Exception as E
-import qualified Control.Monad.Cont as C
-import           Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
-import           Data.Maybe
+--import qualified Data.IntMap as IM
+--import qualified Control.Exception as E
+--import qualified Control.Monad.Cont as C
+--import           Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
+--import           Data.Maybe
 import           Control.Concurrent.Structured
 
 import qualified Log as Log
@@ -52,7 +52,7 @@ handleClientMessage srv cl msg = case msg of
             Nothing -> return ()
 
 createGroupCIO :: Server -> GroupName -> GroupCapacity -> PlayTime -> Timeout -> CIO r Group
-createGroupCIO srv name cap time timeout = do
+createGroupCIO srv name cap playtime timeout = do
     !gid <- liftIO newUniqueInt
     !ts <- liftIO Time.getUnixTimeAsInt
     let
@@ -63,7 +63,8 @@ createGroupCIO srv name cap time timeout = do
             , gvGroupCreatedAt = ts
             , gvGroupTimeout = timeout
             }
-    gr <- liftIO $ newGroup grVal
+        stage = Morning -- FIXME
+    gr <- liftIO $ newGroup grVal stage playtime
     atomically_ $ registerGroup srv gr
     tick srv Log.GroupNew
     -- TODO: Cancel waiting and remove group
