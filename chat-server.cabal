@@ -4,7 +4,7 @@
 name:
   chat-server
 version:
-  0.2.0.0
+  0.2.1.0
 -- synopsis:
 -- description:
 license:
@@ -22,7 +22,7 @@ build-type:
   Simple
 -- extra-source-files:
 cabal-version:
-  >=1.10
+  >=1.18
 
 
 Flag dev
@@ -52,7 +52,7 @@ executable server
     , BangPatterns
 
   build-depends:
-      base >= 4.7 && <4.8
+      base >= 4.7 && <4.9
     , async
     , stm
     , transformers
@@ -69,7 +69,7 @@ executable server
     , binary
 
     , network >= 2.6
-    , ekg
+--    , ekg
 
     , structured-concurrent
 
@@ -104,7 +104,7 @@ executable client
     , DeriveDataTypeable
     , CPP
   build-depends:
-      base >= 4.7 && <4.8
+      base >= 4.7 && <4.9
     , async
     , stm
     , transformers
@@ -148,7 +148,7 @@ test-suite tasty
   hs-source-dirs:
       tests, src
   build-depends:
-      base             >=4.7  && <4.8
+      base             >=4.7  && <4.9
     , tasty            >=0.10 && <0.11
     , tasty-quickcheck >=0.8  && <0.9
 
@@ -183,7 +183,7 @@ executable mem-prof
     , NoImplicitPrelude
     , CPP
   build-depends:
-      base >= 4.7 && <4.8
+      base >= 4.7 && <4.9
     , network
 
     , async

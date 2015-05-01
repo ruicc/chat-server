@@ -3,7 +3,7 @@ module Main where
 import           App.Prelude
 import           App.Config
 import           Chat (runChatServer)
-import           System.Remote.Monitoring
+--import           System.Remote.Monitoring
 
 main :: IO ()
 main = do
