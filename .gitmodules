@@ -1,0 +1,3 @@
+[submodule "structured-concurrent"]
+	path = structured-concurrent
+	url = git@github.com:ruicc/structured-concurrent.git
