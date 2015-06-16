@@ -1,29 +1,26 @@
 chat-server
 ================
 
-
 Ordinary chat server.
 
 
 Requirements
 ================
 
-* Haskell Platform 2014.2.0.0
-    * https://www.haskell.org/platform/
+* [stack](https://github.com/commercialhaskell/stack/wiki/Downloads)
 
 
 How to use
 ================
 
-git-clone and execute `make build && make server`.
+git-clone and just execute `make`:
 
 ```bash
-$ make first && make server
+$ make
+$ make server
 ```
 
-Type Control-C when you want to stop.
-
-And `make server` makes chat-server run again.
+Type Control-C to stop.
 
 
 ## Connect with telnet
