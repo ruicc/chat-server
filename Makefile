@@ -3,6 +3,7 @@ TARGET = server
 CORES = 4
 
 make:
+	git submodule init
 	git submodule update
 	stack build
 
