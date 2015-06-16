@@ -168,49 +168,49 @@ test-suite tasty
       Haskell2010
 
 
-executable mem-prof
-  main-is:
-      MemProf.hs
-  other-modules:
-  default-extensions:
-      ScopedTypeVariables
-    , OverloadedStrings
-    , RecordWildCards
-    , TemplateHaskell
-    , RankNTypes
-    , DeriveDataTypeable
-    , BangPatterns
-    , NoImplicitPrelude
-    , CPP
-  build-depends:
-      base >= 4.7 && <4.9
-    , network
-
-    , async
-    , stm
-    , transformers
-    , mtl
-
-    , containers
-    , bytestring
-    , text
-    , unix-time
-    , yaml
-    , aeson
-    , scientific
-    , unordered-containers
-
-    , structured-concurrent
-
-  hs-source-dirs:
-    tests, src
-  ghc-options:
-    -O2
-    -threaded
-    -fprof-auto
-    -rtsopts
-  default-language:
-    Haskell2010
+--executable mem-prof
+--  main-is:
+--      MemProf.hs
+--  other-modules:
+--  default-extensions:
+--      ScopedTypeVariables
+--    , OverloadedStrings
+--    , RecordWildCards
+--    , TemplateHaskell
+--    , RankNTypes
+--    , DeriveDataTypeable
+--    , BangPatterns
+--    , NoImplicitPrelude
+--    , CPP
+--  build-depends:
+--      base >= 4.7 && <4.9
+--    , network
+--
+--    , async
+--    , stm
+--    , transformers
+--    , mtl
+--
+--    , containers
+--    , bytestring
+--    , text
+--    , unix-time
+--    , yaml
+--    , aeson
+--    , scientific
+--    , unordered-containers
+--
+--    , structured-concurrent
+--
+--  hs-source-dirs:
+--    tests, src
+--  ghc-options:
+--    -O2
+--    -threaded
+--    -fprof-auto
+--    -rtsopts
+--  default-language:
+--    Haskell2010
 
 
 -- vim: expandtab tabstop=2 softtabstop=2 shiftwidth=2

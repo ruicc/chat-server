@@ -1,0 +1,6 @@
+flags: {}
+packages:
+- '.'
+- 'structured-concurrent'
+extra-deps: []
+resolver: lts-2.14

@@ -44,7 +44,7 @@ import           Data.ByteString.Short (ShortByteString, toShort, fromShort)
 import qualified Data.ByteString.Short as SB
 import qualified Data.Text as T
 import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import qualified Data.Binary as Bi
+--import qualified Data.Binary as Bi
 import qualified Data.ByteString.Lazy as BSL
 
 import qualified System.IO as IO
