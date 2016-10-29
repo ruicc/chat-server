@@ -65,14 +65,14 @@ joinAndThen :: Server -> Group -> Client -> Concurrent ()
 joinAndThen srv gr cl = mask_ $ \restore -> do
     !joinSuccess <- addClient srv gr cl
     if joinSuccess
-        then do
+        then
             let
                 finalizer = removeClient srv cl gr
                 clientErrorHandler = \ (_ :: ClientException) -> return ()
                 action = do
                     notifyClient srv gr cl
                     runClient srv gr cl
-            restore action
+            in restore action
                     `catch_` clientErrorHandler
                     `finally_` finalizer
         else

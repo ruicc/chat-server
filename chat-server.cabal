@@ -103,6 +103,8 @@ executable client
     , RecordWildCards
     , DeriveDataTypeable
     , CPP
+    , BangPatterns
+    , LambdaCase
   build-depends:
       base >= 4.7 && <4.10
     , async
