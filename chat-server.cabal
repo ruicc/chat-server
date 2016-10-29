@@ -52,7 +52,7 @@ executable server
     , BangPatterns
 
   build-depends:
-      base >= 4.7 && <4.9
+      base >= 4.7 && <4.10
     , async
     , stm
     , transformers
@@ -104,7 +104,7 @@ executable client
     , DeriveDataTypeable
     , CPP
   build-depends:
-      base >= 4.7 && <4.9
+      base >= 4.7 && <4.10
     , async
     , stm
     , transformers
@@ -148,7 +148,7 @@ test-suite tasty
   hs-source-dirs:
       tests, src
   build-depends:
-      base             >=4.7  && <4.9
+      base             >=4.7  && <4.10
     , tasty            >=0.10 && <0.11
     , tasty-quickcheck >=0.8  && <0.9
 
@@ -183,7 +183,7 @@ test-suite tasty
 --    , NoImplicitPrelude
 --    , CPP
 --  build-depends:
---      base >= 4.7 && <4.9
+--      base >= 4.7 && <4.10
 --    , network
 --
 --    , async

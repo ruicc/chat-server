@@ -3,4 +3,4 @@ packages:
 - '.'
 - 'structured-concurrent'
 extra-deps: []
-resolver: lts-2.14
+resolver: lts-7.5
